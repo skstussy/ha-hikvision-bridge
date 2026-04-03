@@ -1,0 +1,14 @@
+{
+  "domain": "hikvision_ptz",
+  "name": "Hikvision PTZ (ISAPI Proxy)",
+  "version": "2.9.0",
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "requirements": [],
+  "codeowners": [
+    "@skstussy"
+  ],
+  "dependencies": [
+    "stream"
+  ]
+}
