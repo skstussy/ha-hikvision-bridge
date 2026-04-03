@@ -1,32 +1,32 @@
 <p align="center">
-  <img src="IMG/logo-main.png" alt="Hikvision PTZ ISAPI Proxy banner" width="100%">
+  <img src="IMG/logo-main.png" alt="ha-hikvision-ptz-bridge banner" width="100%">
 </p>
 
 <p align="center">
   <img src="IMG/logo.png" alt="Hikvision PTZ icon" width="90">
 </p>
 
-<h1 align="center">Hikvision PTZ (ISAPI Proxy)</h1>
+<h1 align="center">ha-hikvision-ptz-bridge</h1>
 <p align="center"><strong>Advanced Hikvision DVR/NVR integration for Home Assistant</strong></p>
 <p align="center"><em>Bridging the gap between hardware reality and ISAPI standards.</em></p>
 
 <p align="center">
-  <a href="https://github.com/skstussy/hikvision_ptz/releases"><img src="https://img.shields.io/github/v/release/skstussy/hikvision_ptz?include_prereleases&sort=semver&style=for-the-badge&logo=github" alt="Latest Release"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/releases"><img src="https://img.shields.io/github/v/release/skstussy/hikvision_ptz?include_prereleases&sort=semver&style=for-the-badge&logo=github" alt="Latest Release"></a>
   <a href="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/latest/total?style=for-the-badge&logo=home-assistant&logoColor=white"><img src="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/latest/total?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Latest Release Downloads"></a>
-  <a href="https://github.com/skstussy/hikvision_ptz"><img src="https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Home Assistant Custom Integration"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge"><img src="https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Home Assistant Custom Integration"></a>
   <a href="https://www.hacs.xyz/"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge&logo=home-assistant&logoColor=white" alt="HACS Custom"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/skstussy/hikvision_ptz"><img src="https://img.shields.io/github/stars/skstussy/hikvision_ptz?style=social" alt="Stars"></a>
-  <a href="https://github.com/skstussy/hikvision_ptz/issues"><img src="https://img.shields.io/github/issues/skstussy/hikvision_ptz" alt="Issues"></a>
-  <a href="https://github.com/skstussy/hikvision_ptz/releases"><img src="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/total" alt="Downloads"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge"><img src="https://img.shields.io/github/stars/skstussy/hikvision_ptz?style=social" alt="Stars"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/issues"><img src="https://img.shields.io/github/issues/skstussy/hikvision_ptz" alt="Issues"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/releases"><img src="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/total" alt="Downloads"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/skstussy/hikvision_ptz">Documentation</a> •
-  <a href="https://github.com/skstussy/hikvision_ptz/issues">Report Bug</a> •
-  <a href="https://github.com/skstussy/hikvision_ptz/issues">Request Feature</a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge">Documentation</a> •
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/issues">Report Bug</a> •
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/issues">Request Feature</a>
 </p>
 
 ---
@@ -205,7 +205,7 @@ Install the integration from this repo first. The repository also includes the b
 5. Add:
 
    ```text
-   https://github.com/skstussy/hikvision_ptz
+   https://github.com/skstussy/ha-hikvision-bridge
    ```
 
 6. Choose category: **Integration**
