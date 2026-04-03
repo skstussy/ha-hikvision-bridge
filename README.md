@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="IMG/applogo-small-ha-hikvision-bridge.png" alt="ha-hikvision-bridge banner" width="500%">
+  <img src="IMG/applogo-small-ha-hikvision-bridge.png" alt="ha-hikvision-bridge banner" width="500">
 </p>
 
 <h1 align="center">ha-hikvision-bridge</h1>
