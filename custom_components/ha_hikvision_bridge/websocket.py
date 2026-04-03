@@ -25,17 +25,20 @@ def _build_webrtc_result(hass: HomeAssistant, rtsp_url: str) -> dict:
     }
 
 
-def _collect_debug_events(hass: HomeAssistant, entry_id: str | None, camera_id: str | None, limit: int) -> list[dict]:
-    """Collect recent backend debug events for one or more coordinators."""
+
+def _iter_coordinators(hass: HomeAssistant, entry_id: str | None = None) -> list:
     data = hass.data.get(DOMAIN, {})
 
-    coordinators = []
     if entry_id:
         coordinator = data.get(entry_id)
-        if coordinator is not None:
-            coordinators.append(coordinator)
-    else:
-        coordinators = list(data.values())
+        return [coordinator] if coordinator is not None else []
+
+    return [value for value in data.values() if hasattr(value, "get_debug_events")]
+
+
+def _collect_debug_events(hass: HomeAssistant, entry_id: str | None, camera_id: str | None, limit: int) -> list[dict]:
+    """Collect recent backend debug events for one or more coordinators."""
+    coordinators = _iter_coordinators(hass, entry_id=entry_id)
 
     events: list[dict] = []
     for coordinator in coordinators:
@@ -114,19 +117,57 @@ async def async_handle_legacy_get_debug_events(hass: HomeAssistant, connection, 
     )
 
 
-from homeassistant.components import websocket_api
 
-@websocket_api.websocket_command({
-    "type": "ha_hikvision_bridge/subscribe_debug"
-})
-async def async_subscribe_debug(hass, connection, msg):
-    manager = hass.data["ha_hikvision_bridge"]["debug_manager"]
+@websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/subscribe_debug",
+        vol.Optional("entry_id"): str,
+        vol.Optional("camera_id"): str,
+        vol.Optional("limit", default=150): int,
+    }
+)
+@async_response
+async def async_subscribe_debug(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Subscribe to live backend debug events."""
+    entry_id = msg.get("entry_id")
+    camera_id = msg.get("camera_id")
+    limit = max(1, min(int(msg.get("limit", 150) or 150), 500))
+    coordinators = _iter_coordinators(hass, entry_id=entry_id)
 
-    def forward(event):
-        connection.send_message({
-            "type": "event",
-            "event": event,
-        })
+    unsubscribers = []
 
-    manager.register_listener(forward)
-    
+    def forward(event: dict) -> None:
+        try:
+            if camera_id and str(event.get("camera_id") or "") != str(camera_id):
+                return
+            connection.send_message({
+                "id": msg["id"],
+                "type": "event",
+                "event": event,
+            })
+        except Exception:
+            return
+
+    for coordinator in coordinators:
+        manager = getattr(coordinator, "_debug_manager", None)
+        register = getattr(manager, "register_listener", None)
+        if callable(register):
+            try:
+                unsubscribers.append(register(forward))
+            except Exception:
+                continue
+
+    initial_events = _collect_debug_events(hass, entry_id=entry_id, camera_id=camera_id, limit=limit)
+    connection.send_result(msg["id"])
+    for event in initial_events:
+        forward(event)
+
+    def _unsubscribe() -> None:
+        for unsub in list(unsubscribers):
+            try:
+                if callable(unsub):
+                    unsub()
+            except Exception:
+                continue
+
+    connection.subscriptions[msg["id"]] = _unsubscribe

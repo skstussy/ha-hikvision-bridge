@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from copy import deepcopy
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -50,6 +51,16 @@ class HikvisionDebugManager:
     def __init__(self, max_entries: int = 300) -> None:
         self._events: deque[dict[str, Any]] = deque(maxlen=max(50, int(max_entries or 300)))
         self._sequence = 0
+        self._listeners: list[Any] = []
+
+    def register_listener(self, callback) -> callable:
+        self._listeners.append(callback)
+
+        def _unsubscribe() -> None:
+            with suppress(ValueError):
+                self._listeners.remove(callback)
+
+        return _unsubscribe
 
     def push(
         self,
@@ -83,7 +94,13 @@ class HikvisionDebugManager:
             "error": sanitize_debug(error) if error is not None else None,
         }
         self._events.append(event_obj)
-        return deepcopy(event_obj)
+        payload = deepcopy(event_obj)
+        for callback in list(self._listeners):
+            try:
+                callback(deepcopy(payload))
+            except Exception:
+                continue
+        return payload
 
     def get_events(self, *, camera_id: str | None = None, entry_id: str | None = None, limit: int = 150) -> list[dict[str, Any]]:
         events = list(self._events)
