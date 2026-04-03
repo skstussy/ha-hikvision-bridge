@@ -112,3 +112,21 @@ async def async_handle_legacy_get_debug_events(hass: HomeAssistant, connection, 
         msg["id"],
         {"events": _collect_debug_events(hass, entry_id=entry_id, camera_id=camera_id, limit=limit)},
     )
+
+
+from homeassistant.components import websocket_api
+
+@websocket_api.websocket_command({
+    "type": "ha_hikvision_bridge/subscribe_debug"
+})
+async def async_subscribe_debug(hass, connection, msg):
+    manager = hass.data["ha_hikvision_bridge"]["debug_manager"]
+
+    def forward(event):
+        connection.send_message({
+            "type": "event",
+            "event": event,
+        })
+
+    manager.register_listener(forward)
+    
