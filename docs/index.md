@@ -1,8 +1,3 @@
-# ha-hikvision-bridge Documentation
+# Index
 
-Welcome to the official documentation.
-
-- [Installation](installation.md)
-- [Configuration](configuration.md)
-- [Services](services.md)
-- [Troubleshooting](troubleshooting.md)
+Documentation content for index.

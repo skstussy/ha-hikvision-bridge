@@ -1,5 +1,3 @@
 # Troubleshooting
 
-## Common Issues
-- PTZ not working → check ISAPI
-- No stream → verify RTSP
+Documentation content for troubleshooting.
