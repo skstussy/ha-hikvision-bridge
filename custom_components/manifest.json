@@ -1,6 +1,6 @@
 {
   "domain": "ha-hikvision-bridge",
-  "name": "Hikvision PTZ (ISAPI Proxy)",
+  "name": "ha-hikvision-bridge",
   "version": "2.9.0",
   "config_flow": true,
   "iot_class": "local_polling",
