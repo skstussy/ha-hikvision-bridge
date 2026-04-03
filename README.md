@@ -3,7 +3,8 @@
 </p>
 
 <h1 align="center">ha-hikvision-bridge</h1>
-<p align="center"><strong>![GitHub description](https://img.shields.io/github/v/tag/skstussy/ha-hikvision-bridge)</strong></p>
+<p align="center"><strong></strong></p>
+![GitHub description](https://img.shields.io/github/v/tag/skstussy/ha-hikvision-bridge)
 <p align="center"><em>Bridging the gap between hardware reality and ISAPI standards.</em></p>
 
 <p align="center">
