@@ -32,7 +32,7 @@ from .websocket import (
     async_subscribe_debug,
 )
 
-SERVICE_DOMAINS = (DOMAIN, LEGACY_DOMAIN)
+SERVICE_DOMAINS = (DOMAIN,)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
