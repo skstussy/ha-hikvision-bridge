@@ -8,16 +8,16 @@
 <p align="center"><em>Bridging the gap between hardware reality and ISAPI standards.</em></p>
 
 <p align="center">
-  <a href="https://github.com/skstussy/ha-hikvision-bridge/releases"><img src="https://img.shields.io/github/v/release/skstussy/hikvision_ptz?include_prereleases&sort=semver&style=for-the-badge&logo=github" alt="Latest Release"></a>
-  <a href="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/latest/total?style=for-the-badge&logo=home-assistant&logoColor=white"><img src="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/latest/total?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Latest Release Downloads"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/releases"><img src="https://img.shields.io/github/v/release/skstussy/ha-hikvision-bridge?include_prereleases&sort=semver&style=for-the-badge&logo=github" alt="Latest Release"></a>
+  <a href="https://img.shields.io/github/downloads/skstussy/ha-hikvision-bridge/latest/total?style=for-the-badge&logo=home-assistant&logoColor=white"><img src="https://img.shields.io/github/downloads/skstussy/ha-hikvision-bridge/latest/total?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Latest Release Downloads"></a>
   <a href="https://github.com/skstussy/ha-hikvision-bridge"><img src="https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Home Assistant Custom Integration"></a>
   <a href="https://www.hacs.xyz/"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge&logo=home-assistant&logoColor=white" alt="HACS Custom"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/skstussy/ha-hikvision-bridge"><img src="https://img.shields.io/github/stars/skstussy/hikvision_ptz?style=social" alt="Stars"></a>
-  <a href="https://github.com/skstussy/ha-hikvision-bridge/issues"><img src="https://img.shields.io/github/issues/skstussy/hikvision_ptz" alt="Issues"></a>
-  <a href="https://github.com/skstussy/ha-hikvision-bridge/releases"><img src="https://img.shields.io/github/downloads/skstussy/hikvision_ptz/total" alt="Downloads"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge"><img src="https://img.shields.io/github/stars/skstussy/ha-hikvision-bridge?style=social" alt="Stars"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/issues"><img src="https://img.shields.io/github/issues/skstussy/ha-hikvision-bridge" alt="Issues"></a>
+  <a href="https://github.com/skstussy/ha-hikvision-bridge/releases"><img src="https://img.shields.io/github/downloads/skstussy/ha-hikvision-bridge/total" alt="Downloads"></a>
 </p>
 
 <p align="center">
@@ -76,7 +76,7 @@ This integration is written with those realities in mind. Instead of assuming th
 
 This repository now bundles both parts of the project in a **single repo**:
 
-- **Backend integration** under `custom_components/hikvision_ptz`
+- **Backend integration** under `custom_components/ha-hikvision-bridge`
 - **Full Hikvision PTZ Lovelace card** as `ha-hikvision-bridge-card.js`
 
 The integration provides the backend logic, entities, services, and attributes. The bundled card provides the polished dashboard experience.
@@ -178,16 +178,16 @@ The exact entity set depends on device model, firmware behavior, enabled streams
 ## 🛠 Services
 
 ### Core PTZ services
-- `hikvision_ptz.ptz`
-- `hikvision_ptz.goto_preset`
-- `hikvision_ptz.zoom`
-- `hikvision_ptz.focus`
-- `hikvision_ptz.iris`
-- `hikvision_ptz.ptz_return_to_center`
+- `ha-hikvision-bridge.ptz`
+- `ha-hikvision-bridge.goto_preset`
+- `ha-hikvision-bridge.zoom`
+- `ha-hikvision-bridge.focus`
+- `ha-hikvision-bridge.iris`
+- `ha-hikvision-bridge.ptz_return_to_center`
 
 ### Playback services
-- `hikvision_ptz.playback_seek`
-- `hikvision_ptz.playback_stop`
+- `ha-hikvision-bridge.playback_seek`
+- `ha-hikvision-bridge.playback_stop`
 
 ## 🚀 Installation
 
@@ -215,13 +215,13 @@ Install the integration from this repo first. The repository also includes the b
 2. Extract the folder:
 
    ```text
-   custom_components/hikvision_ptz
+   custom_components/ha-hikvision-bridge
    ```
 
 3. Copy it into your Home Assistant config directory:
 
    ```text
-   /config/custom_components/hikvision_ptz
+   /config/custom_components/ha-hikvision-bridge
    ```
 
 4. Restart Home Assistant
@@ -255,7 +255,7 @@ These services can be used in:
 ### Example service call: playback seek
 
 ```yaml
-service: hikvision_ptz.playback_seek
+service: ha-hikvision-bridge.playback_seek
 target:
   entity_id: camera.front_yard
 data:
@@ -265,7 +265,7 @@ data:
 ### Example service call: playback stop
 
 ```yaml
-service: hikvision_ptz.playback_stop
+service: ha-hikvision-bridge.playback_stop
 target:
   entity_id: camera.front_yard
 ```
