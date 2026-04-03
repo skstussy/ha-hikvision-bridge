@@ -1,13 +1,9 @@
 <p align="center">
-  <img src="IMG/logo-main.png" alt="ha-hikvision-bridge banner" width="100%">
-</p>
-
-<p align="center">
-  <img src="IMG/hikvision-bridge.png" alt="ha-hikvision-bridge logo" width="90">
+  <img src="IMG/applogo-large-ha-hikvision-bridge.png" alt="ha-hikvision-bridge banner" width="100%">
 </p>
 
 <h1 align="center">ha-hikvision-bridge</h1>
-<p align="center"><strong>Advanced Hikvision DVR/NVR integration for Home Assistant</strong></p>
+<p align="center"><strong>![GitHub description](https://img.shields.io/github/v/tag/skstussy/ha-hikvision-bridge)</strong></p>
 <p align="center"><em>Bridging the gap between hardware reality and ISAPI standards.</em></p>
 
 <p align="center">
