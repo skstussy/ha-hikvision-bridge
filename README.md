@@ -4,7 +4,7 @@
 
 <h1 align="center">ha-hikvision-bridge</h1>
 <p align="center"><strong></strong></p>
-<img src="https://img.shields.io/badge/dynamic/json?url=https://api.github.com/repos/skstussy/hikvision-bridge&query=$.description&label=About" />
+<img src="https://img.shields.io/badge/dynamic/json?url=https://api.github.com/repos/skstussy/ha-hikvision-bridge&query=$.description&label=About" />
 <p align="center"><em>Bridging the gap between hardware reality and ISAPI standards.</em></p>
 
 <p align="center">
