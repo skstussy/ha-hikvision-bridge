@@ -1,6 +1,6 @@
 {
   "domain": "ha-hikvision-bridge",
-  "name": "ha-hikvision-bridge2",
+  "name": "Home Assistant - Hikvision Unleashed",
   "version": "2.9.0",
   "content_in_root": false,
   "documentation": "https://github.com/skstussy/ha-hikvision-bridge",
