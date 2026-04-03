@@ -9,7 +9,6 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
-    LEGACY_DOMAIN,
     PLATFORMS,
     SERVICE_FOCUS,
     SERVICE_GOTO_PRESET,
