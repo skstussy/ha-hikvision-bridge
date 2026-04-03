@@ -1,4 +1,4 @@
-DOMAIN = "hikvision_ptz"
+DOMAIN = "ha-hikvision-bridge"
 
 CONF_HOST = "host"
 CONF_PORT = "port"
