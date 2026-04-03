@@ -1,5 +1,5 @@
 {
-  "domain": "hikvision_ptz",
+  "domain": "ha-hikvision-bridge",
   "name": "Hikvision PTZ (ISAPI Proxy)",
   "version": "2.9.0",
   "config_flow": true,
