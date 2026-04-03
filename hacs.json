@@ -1,7 +1,7 @@
 {
   "domain": "ha-hikvision-bridge",
   "name": "Home Assistant - Hikvision Bridge",
-  "version": "2.9.0",
+  "version": "1.0.0",
   "content_in_root": false,
   "documentation": "https://github.com/skstussy/ha-hikvision-bridge",
   "issue_tracker": "https://github.com/skstussy/ha-hikvision-bridge/issues",
