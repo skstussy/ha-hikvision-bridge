@@ -6,6 +6,7 @@ from homeassistant.components.websocket_api import async_register_command
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import config_validation as cv
+from .debug_manager import DebugManager
 
 from .const import (
     DOMAIN,
@@ -49,6 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    hass.data[DOMAIN]["debug_manager"] = DebugManager()
 
     _create_parent_dvr_device(hass, entry, coordinator)
     for service_domain in SERVICE_DOMAINS:
