@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="IMG/logo.png" alt="Hikvision PTZ icon" width="90">
+  <img src="IMG/hikvision-bridge.png" alt="ha-hikvision-bridge logo" width="90">
 </p>
 
 <h1 align="center">ha-hikvision-bridge</h1>
