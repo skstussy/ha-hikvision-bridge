@@ -199,7 +199,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
-            name="hikvision_ptz",
+            name="ha-hikvision-bridge",
             update_interval=timedelta(seconds=15),
         )
         self.entry = entry
