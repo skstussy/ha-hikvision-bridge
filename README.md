@@ -77,7 +77,7 @@ This integration is written with those realities in mind. Instead of assuming th
 This repository now bundles both parts of the project in a **single repo**:
 
 - **Backend integration** under `custom_components/hikvision_ptz`
-- **Full Hikvision PTZ Lovelace card** as `hikvision-ptz-card.js`
+- **Full Hikvision PTZ Lovelace card** as `ha-hikvision-bridge-card.js`
 
 The integration provides the backend logic, entities, services, and attributes. The bundled card provides the polished dashboard experience.
 
@@ -193,7 +193,7 @@ The exact entity set depends on device model, firmware behavior, enabled streams
 
 ### Option 1 — HACS (recommended)
 
-Install the integration from this repo first. The repository also includes the bundled Lovelace card source (`hikvision-ptz-card.js`) so the project can now be maintained from one place.
+Install the integration from this repo first. The repository also includes the bundled Lovelace card source (`ha-hikvision-bridge-card.js`) so the project can now be maintained from one place.
 
 1. Open **HACS**
 2. Go to **Integrations**
@@ -242,7 +242,7 @@ After installation:
 For the best experience, pair this integration with the companion card.
 
 - backend, entities, and services → **this repository**
-- frontend, dashboard controls, and polished UI → **hikvision-ptz-card**
+- frontend, dashboard controls, and polished UI → **ha-hikvision-bridge-card**
 
 ### Automation usage
 These services can be used in:
@@ -354,7 +354,7 @@ If this project helps you, a star, issue report, support, or contribution is app
 This repository includes the current full Hikvision PTZ dashboard card as:
 
 ```text
-hikvision-ptz-card.js
+ha-hikvision-bridge-card.js
 ```
 
 That lets you maintain the backend integration and the card from a single GitHub repo going forward.
@@ -363,22 +363,22 @@ That lets you maintain the backend integration and the card from a single GitHub
 
 Because this merged package intentionally avoids changing existing functionality code, card loading remains documented and explicit:
 
-1. Copy `hikvision-ptz-card.js` into your Home Assistant `www` directory, for example:
+1. Copy `ha-hikvision-bridge-card.js` into your Home Assistant `www` directory, for example:
 
    ```text
-   /config/www/hikvision-ptz-card.js
+   /config/www/ha-hikvision-bridge-card.js
    ```
 
 2. Add the Lovelace resource:
 
    ```text
-   /local/hikvision-ptz-card.js
+   /local/ha-hikvision-bridge-card.js
    ```
 
 3. Add the card to a dashboard:
 
    ```yaml
-   type: custom:hikvision-ptz-card
+   type: custom:ha-hikvision-bridge-card
    title: Front Yard PTZ
    auto_discover: true
    ```
