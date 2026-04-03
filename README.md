@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="IMG/logo-main.png" alt="ha-hikvision-ptz-bridge banner" width="100%">
+  <img src="IMG/logo-main.png" alt="ha-hikvision-bridge banner" width="100%">
 </p>
 
 <p align="center">
   <img src="IMG/logo.png" alt="Hikvision PTZ icon" width="90">
 </p>
 
-<h1 align="center">ha-hikvision-ptz-bridge</h1>
+<h1 align="center">ha-hikvision-bridge</h1>
 <p align="center"><strong>Advanced Hikvision DVR/NVR integration for Home Assistant</strong></p>
 <p align="center"><em>Bridging the gap between hardware reality and ISAPI standards.</em></p>
 
