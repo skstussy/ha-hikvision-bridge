@@ -1,62 +1,15 @@
-site_name: ha-hikvision-bridge
-site_description: Local-first Hikvision ISAPI integration for Home Assistant
-site_author: Shaun Hill
-repo_url: https://github.com/skstussy/ha-hikvision-bridge
-repo_name: skstussy/ha-hikvision-bridge
 
+site_name: ha-hikvision-bridge
 theme:
   name: material
-  logo: images/logo.png
-  favicon: images/logo.png
-  palette:
-    - scheme: default
-      primary: blue
-      accent: light blue
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - scheme: slate
-      primary: blue
-      accent: light blue
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
-  features:
-    - navigation.tabs
-    - navigation.top
-    - navigation.sections
-    - navigation.expand
-    - search.highlight
-    - search.suggest
-    - content.code.copy
-    - content.tabs.link
-
-plugins:
-  - search
-
 nav:
   - Home: index.md
-  - Getting Started:
-      - Installation: installation.md
-      - Configuration: configuration.md
-  - Features:
-      - Streaming: streaming.md
-      - Playback: playback.md
-      - PTZ: ptz.md
-  - Reference:
-      - Services: services.md
-      - Entities: entities.md
-  - Advanced:
-      - Architecture: architecture.md
-      - Troubleshooting: troubleshooting.md
-
-markdown_extensions:
-  - admonition
-  - toc:
-      permalink: true
-  - pymdownx.details
-  - pymdownx.superfences
-  - pymdownx.highlight
-  - pymdownx.inlinehilite
-  - pymdownx.tabbed:
-      alternate_style: true
+  - Installation: installation.md
+  - Configuration: configuration.md
+  - Streaming: streaming.md
+  - PTZ: ptz.md
+  - Playback: playback.md
+  - Services: services.md
+  - Entities: entities.md
+  - Troubleshooting: troubleshooting.md
+  - Architecture: architecture.md

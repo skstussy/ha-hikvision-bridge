@@ -212,6 +212,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         self.rtsp_port = DEFAULT_RTSP_PORT
         self._stream_profile_by_camera: dict[str, str] = {}
         self._alarm_task: asyncio.Task | None = None
+        self._alarm_response = None
         self._alarm_running = False
         self._playback_debug_by_camera: dict[str, list[dict]] = {}
         self._debug_enabled = bool(entry.options.get(CONF_DEBUG_ENABLED, False))
@@ -816,6 +817,11 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
     async def async_stop_alarm_stream(self) -> None:
         self._alarm_running = False
+        response = self._alarm_response
+        self._alarm_response = None
+        if response is not None:
+            with suppress(Exception):
+                response.close()
         task = self._alarm_task
         self._alarm_task = None
         if task:
@@ -949,6 +955,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         while self._alarm_running:
             try:
                 resp = await self._request_raw("GET", path)
+                self._alarm_response = resp
                 if resp.status not in (200, 201):
                     body = await resp.text()
                     raise UpdateFailed(f"GET {path} failed {resp.status}: {body}")
@@ -990,6 +997,11 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 raise
             except Exception as err:
                 _LOGGER.debug("Hikvision alarm stream disconnected: %s", err)
+            finally:
+                if self._alarm_response is not None:
+                    with suppress(Exception):
+                        self._alarm_response.close()
+                self._alarm_response = None
 
             if self._alarm_running:
                 current = dict(self.data or {})
