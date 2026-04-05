@@ -1,4 +1,3 @@
-LEGACY_DOMAIN = "hikvision_ptz"
 DOMAIN = "ha_hikvision_bridge"
 
 CONF_HOST = "host"
