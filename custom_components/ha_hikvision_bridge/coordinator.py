@@ -676,15 +676,53 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         })
         return None
 
+    def _is_not_supported_error(self, err: Exception) -> bool:
+        message = str(err or "").lower()
+        markers = (
+            " notsupport",
+            "notsupport",
+            "not supported",
+            "invalid operation",
+            "invalidoperation",
+            "feature not supported",
+            "not implement",
+            "notimplemented",
+            "unsupported",
+        )
+        return any(marker in message for marker in markers)
+
     async def _async_update_data(self):
         try:
             device_xml = await self.request("GET", "/ISAPI/System/deviceInfo?JumpChildDev=true")
-            storage_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage")
-            storage_caps_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage/hdd/capabilities")
+            storage_xml = None
+            storage_caps_xml = None
+            storage_extra_caps_xml = None
+            storage_info_supported = False
+            storage_hdd_caps_supported = False
+            storage_extra_caps_supported = False
+
+            try:
+                storage_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage")
+                storage_info_supported = True
+            except Exception as err:
+                if not self._is_not_supported_error(err):
+                    raise
+
+            try:
+                storage_caps_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage/hdd/capabilities")
+                storage_hdd_caps_supported = True
+            except Exception as err:
+                if not self._is_not_supported_error(err):
+                    raise
+
             try:
                 storage_extra_caps_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage/ExtraInfo/capabilities")
-            except Exception:
-                storage_extra_caps_xml = None
+                storage_extra_caps_supported = True
+            except Exception as err:
+                if not self._is_not_supported_error(err):
+                    storage_extra_caps_xml = None
+                else:
+                    storage_extra_caps_xml = None
             try:
                 io_inputs_xml = await self.request("GET", "/ISAPI/System/IO/inputs")
             except Exception:
@@ -705,6 +743,22 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 extra_disk_mode = safe_find_text(storage_extra_caps_xml, "diskMode")
                 if extra_disk_mode:
                     storage_caps["disk_mode"] = extra_disk_mode
+            storage_hdds = storage_info.get("hdds") or storage_caps.get("hdds") or []
+            storage_present = bool(
+                storage_hdds
+                or int(storage_info.get("disk_count", 0) or 0) > 0
+                or int(storage_caps.get("disk_count", 0) or 0) > 0
+                or int(storage_info.get("total_capacity_mb", 0) or 0) > 0
+                or int(storage_caps.get("total_capacity_mb", 0) or 0) > 0
+            )
+            playback_supported = bool(storage_info_supported and storage_present)
+            device_capabilities = {
+                "storage_info_supported": storage_info_supported,
+                "storage_hdd_caps_supported": storage_hdd_caps_supported,
+                "storage_extra_caps_supported": storage_extra_caps_supported,
+                "storage_present": storage_present,
+                "playback_supported": playback_supported,
+            }
             alarm_inputs = parse_io_inputs_xml(io_inputs_xml)
 
             all_cameras: list[dict] = []
@@ -765,6 +819,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "stream_profile_options": sorted(list(stream_profiles.keys())),
                     "main_stream_id": (stream_profiles.get("main") or {}).get("stream_id"),
                     "sub_stream_id": (stream_profiles.get("sub") or {}).get("stream_id"),
+                    "playback_supported": playback_supported,
+                    "storage_present": storage_present,
+                    "storage_info_supported": storage_info_supported,
+                    "storage_hdd_caps_supported": storage_hdd_caps_supported,
                 }
                 all_cameras.append(camera)
 
@@ -800,7 +858,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "supports_isapi": True,
                     "online": True,
                 },
-                "storage": {**storage_info, **storage_caps},
+                "storage": {**storage_info, **storage_caps, **device_capabilities},
+                "capabilities": device_capabilities,
                 "alarm_states": dict((self.data or {}).get("alarm_states") or self._default_alarm_states()),
             }
         except Exception as err:

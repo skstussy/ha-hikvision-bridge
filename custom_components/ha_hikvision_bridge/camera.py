@@ -137,6 +137,10 @@ class HikvisionCameraEntity(CoordinatorEntity, Camera):
             "playback_clip_end_time": self._playback_clip_end_time,
             "playback_debug": self.coordinator.get_playback_debug(self._cam_id),
             "playback_state_label": "playback" if self._playback_active and self._playback_uri else "live",
+            "playback_supported": cam.get("playback_supported", False),
+            "storage_present": cam.get("storage_present", False),
+            "storage_info_supported": cam.get("storage_info_supported", False),
+            "storage_hdd_caps_supported": cam.get("storage_hdd_caps_supported", False),
         }
 
     async def stream_source(self):
