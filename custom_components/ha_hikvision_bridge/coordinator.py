@@ -11,6 +11,7 @@ from contextlib import suppress
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     CONF_DEBUG_CATEGORIES,
@@ -471,13 +472,103 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         return ptz_map
 
 
-    async def _supports_direct_ptz(self, channel_id: str) -> bool:
+    def _infer_ptz_mode_support(self, *values: str | None) -> tuple[bool | None, bool | None]:
+        combined = "\n".join(str(value or "") for value in values).strip().lower()
+        if not combined:
+            return None, None
+        has_momentary = "momentary" in combined
+        has_continuous = "continuous" in combined
+        return has_momentary, has_continuous
+
+    async def _get_direct_ptz_capabilities(self, channel_id: str) -> dict[str, object]:
         try:
             resp = await self._request_raw("GET", f"/ISAPI/PTZCtrl/channels/{channel_id}/capabilities")
             body = await resp.text()
-            return resp.status in (200, 201) and "PTZChannelCap" in body
+            supported = resp.status in (200, 201) and "PTZChannelCap" in body
+            momentary_supported, continuous_supported = self._infer_ptz_mode_support(body)
+            return {
+                "supported": supported,
+                "momentary_supported": bool(momentary_supported) if momentary_supported is not None else None,
+                "continuous_supported": bool(continuous_supported) if continuous_supported is not None else None,
+            }
         except Exception:
-            return False
+            return {
+                "supported": False,
+                "momentary_supported": None,
+                "continuous_supported": None,
+            }
+
+    def _build_ptz_capabilities(self, cam_id: str, ptz_info: dict, direct_ptz_caps: dict[str, object]) -> dict[str, object]:
+        proxy_supported = bool(cam_id and cam_id in (self.data.get("ptz_map", {}) if isinstance(self.data, dict) else {})) or bool(ptz_info)
+        proxy_ctrl_mode = str(ptz_info.get("ctrl_mode") or "").strip()
+        proxy_mode_momentary, proxy_mode_continuous = self._infer_ptz_mode_support(proxy_ctrl_mode)
+
+        direct_supported = bool(direct_ptz_caps.get("supported"))
+        direct_mode_momentary = direct_ptz_caps.get("momentary_supported")
+        direct_mode_continuous = direct_ptz_caps.get("continuous_supported")
+
+        proxy_momentary_supported = bool(proxy_supported and (proxy_mode_momentary is True or (proxy_mode_momentary is None and proxy_mode_continuous is None)))
+        proxy_continuous_supported = bool(proxy_supported and proxy_mode_continuous is True)
+        direct_momentary_supported = bool(direct_supported and direct_mode_momentary is True)
+        direct_continuous_supported = bool(direct_supported and direct_mode_continuous is True)
+
+        integration_ptz_supported = proxy_momentary_supported
+        unsupported_reason = None
+        if not integration_ptz_supported:
+            if proxy_supported and proxy_continuous_supported and not proxy_momentary_supported:
+                unsupported_reason = "proxy_continuous_only"
+            elif direct_supported:
+                unsupported_reason = "direct_ptz_not_implemented"
+            elif proxy_supported:
+                unsupported_reason = "proxy_mode_unknown"
+            else:
+                unsupported_reason = "not_supported"
+
+        if integration_ptz_supported:
+            control_method = "proxy"
+        elif proxy_supported:
+            control_method = "proxy"
+        elif direct_supported:
+            control_method = "direct"
+        else:
+            control_method = None
+
+        capability_mode = None
+        if proxy_supported:
+            if proxy_momentary_supported and proxy_continuous_supported:
+                capability_mode = "proxy_momentary_continuous"
+            elif proxy_momentary_supported:
+                capability_mode = "proxy_momentary"
+            elif proxy_continuous_supported:
+                capability_mode = "proxy_continuous"
+            else:
+                capability_mode = "proxy_unknown"
+        elif direct_supported:
+            if direct_momentary_supported and direct_continuous_supported:
+                capability_mode = "direct_momentary_continuous"
+            elif direct_momentary_supported:
+                capability_mode = "direct_momentary"
+            elif direct_continuous_supported:
+                capability_mode = "direct_continuous"
+            else:
+                capability_mode = "direct_unknown"
+
+        return {
+            "ptz_proxy_supported": proxy_supported,
+            "ptz_direct_supported": direct_supported,
+            "ptz_proxy_ctrl_mode": proxy_ctrl_mode or None,
+            "ptz_proxy_momentary_supported": proxy_momentary_supported,
+            "ptz_proxy_continuous_supported": proxy_continuous_supported,
+            "ptz_direct_momentary_supported": direct_momentary_supported,
+            "ptz_direct_continuous_supported": direct_continuous_supported,
+            "ptz_momentary_supported": proxy_momentary_supported or direct_momentary_supported,
+            "ptz_continuous_supported": proxy_continuous_supported or direct_continuous_supported,
+            "ptz_capability_mode": capability_mode,
+            "ptz_supported": integration_ptz_supported,
+            "ptz_control_method": control_method,
+            "ptz_implementation": "proxy_momentary" if integration_ptz_supported else None,
+            "ptz_unsupported_reason": unsupported_reason,
+        }
 
     def _is_real_camera(self, camera: dict, dvr_name: str, dvr_model: str, dvr_serial: str) -> bool:
         cam_name = (camera.get("name") or "").strip()
@@ -783,7 +874,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 active_stream = active_streams.get(cam_id, {})
                 stream_profiles = stream_profiles_by_camera.get(cam_id, {})
                 selected_stream_profile = normalize_stream_profile(self._stream_profile_by_camera.get(cam_id, DEFAULT_STREAM_PROFILE))
-                direct_ptz_supported = await self._supports_direct_ptz(cam_id)
+                direct_ptz_caps = await self._get_direct_ptz_capabilities(cam_id)
+                ptz_capabilities = self._build_ptz_capabilities(cam_id, ptz_info, direct_ptz_caps)
 
                 camera = {
                     "id": cam_id,
@@ -804,10 +896,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "certificate_validation_enabled": coerce_bool(text_hk(ch, "hk:certificateValidationEnabled")),
                     "default_admin_port_enabled": coerce_bool(text_hk(ch, "hk:defaultAdminPortEnabled")),
                     "timing_enabled": coerce_bool(text_hk(ch, "hk:enableTiming")),
-                    "ptz_proxy_supported": cam_id in ptz_map,
-                    "ptz_direct_supported": direct_ptz_supported,
-                    "ptz_supported": (cam_id in ptz_map) or direct_ptz_supported,
-                    "ptz_control_method": "proxy" if cam_id in ptz_map else ("direct" if direct_ptz_supported else None),
+                    **ptz_capabilities,
                     "ptz_enabled": ptz_info.get("enabled"),
                     "ptz_online": ptz_info.get("online"),
                     "online": bool(ip_addr and (model or serial or firmware)),
@@ -1059,7 +1148,23 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     self.async_set_updated_data(current)
                 await asyncio.sleep(backoff)
 
+    def _camera_ptz_profile(self, channel: str | int) -> dict:
+        return self._camera_by_id(str(channel)) or {}
+
+    def _validate_proxy_momentary_ptz(self, channel: str | int) -> dict:
+        camera = self._camera_ptz_profile(channel)
+        if camera.get("ptz_supported") is not True:
+            reason = camera.get("ptz_unsupported_reason") or "not_supported"
+            raise HomeAssistantError(f"PTZ is not supported by this integration for channel {channel} ({reason}).")
+        if camera.get("ptz_control_method") != "proxy":
+            method = camera.get("ptz_control_method") or "none"
+            raise HomeAssistantError(f"PTZ control method {method} is not implemented for channel {channel}.")
+        if camera.get("ptz_proxy_momentary_supported") is not True:
+            raise HomeAssistantError(f"Proxy momentary PTZ is not available for channel {channel}.")
+        return camera
+
     async def ptz(self, channel, pan, tilt, duration=500):
+        self._validate_proxy_momentary_ptz(channel)
         xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <PTZData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
     <pan>{int(pan)}</pan>
@@ -1075,6 +1180,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         )
 
     async def zoom(self, channel, direction, speed=50, duration=500):
+        self._validate_proxy_momentary_ptz(channel)
         signed_zoom = max(-100, min(100, int(speed))) * (1 if int(direction) >= 0 else -1)
         xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <PTZData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">

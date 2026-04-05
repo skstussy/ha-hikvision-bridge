@@ -58,6 +58,16 @@ class BaseCameraBinary(CoordinatorEntity, BinarySensorEntity):
             "ptz_proxy_supported": cam.get("ptz_proxy_supported"),
             "ptz_direct_supported": cam.get("ptz_direct_supported"),
             "ptz_control_method": cam.get("ptz_control_method"),
+            "ptz_capability_mode": cam.get("ptz_capability_mode"),
+            "ptz_implementation": cam.get("ptz_implementation"),
+            "ptz_proxy_ctrl_mode": cam.get("ptz_proxy_ctrl_mode"),
+            "ptz_momentary_supported": cam.get("ptz_momentary_supported"),
+            "ptz_continuous_supported": cam.get("ptz_continuous_supported"),
+            "ptz_proxy_momentary_supported": cam.get("ptz_proxy_momentary_supported"),
+            "ptz_proxy_continuous_supported": cam.get("ptz_proxy_continuous_supported"),
+            "ptz_direct_momentary_supported": cam.get("ptz_direct_momentary_supported"),
+            "ptz_direct_continuous_supported": cam.get("ptz_direct_continuous_supported"),
+            "ptz_unsupported_reason": cam.get("ptz_unsupported_reason"),
         }
 
 
