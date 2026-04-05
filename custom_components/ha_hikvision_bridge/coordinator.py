@@ -35,6 +35,24 @@ NS = {"hk": "http://www.hikvision.com/ver20/XMLSchema"}
 STREAM_NS = {"isapi": "http://www.isapi.org/ver20/XMLSchema"}
 
 
+class HikvisionEndpointError(UpdateFailed):
+    def __init__(self, *, method: str, path: str, status: int | None = None, body: str | None = None, classification: str = "request_error", detail: str | None = None):
+        self.method = method
+        self.path = path
+        self.status = status
+        self.body = body
+        self.classification = classification
+        self.detail = detail
+        parts = [f"{method} {path}"]
+        if status is not None:
+            parts.append(f"failed {status}")
+        if detail:
+            parts.append(detail)
+        elif body:
+            parts.append(body)
+        super().__init__(": ".join(parts))
+
+
 def text_ns(node, path, ns, default=""):
     value = node.findtext(path, default=default, namespaces=ns)
     return (value or "").strip()
@@ -364,11 +382,47 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
         return resp
 
+    def _classify_endpoint_issue(self, *, status: int | None = None, body: str | None = None, err: Exception | None = None) -> str:
+        message = str(body or err or "").lower()
+        if isinstance(err, asyncio.TimeoutError):
+            return "transport_error"
+        if isinstance(err, aiohttp.ClientError):
+            return "transport_error"
+        if status == 404:
+            return "missing"
+        if status in (401, 403):
+            if self._is_not_supported_error(Exception(message)):
+                return "unsupported"
+            return "forbidden"
+        if self._is_not_supported_error(Exception(message)):
+            return "unsupported"
+        if status is not None and status >= 500:
+            return "device_error"
+        if status is not None and status >= 400:
+            return "request_error"
+        if err is not None:
+            return "transport_error"
+        return "request_error"
+
+    def _endpoint_issue_context(self, *, method: str, path: str, status: int | None = None, classification: str, detail: str | None = None) -> dict:
+        return {
+            "method": method,
+            "path": path,
+            "status": status,
+            "classification": classification,
+            "detail": (detail or "")[:300] or None,
+        }
+
     async def request(self, method: str, path: str, data: str | None = None):
-        resp = await self._request_raw(method, path, data=data)
+        try:
+            resp = await self._request_raw(method, path, data=data)
+        except Exception as err:
+            classification = self._classify_endpoint_issue(err=err)
+            raise HikvisionEndpointError(method=method, path=path, classification=classification, detail=str(err)) from err
         text = await resp.text()
         if resp.status not in (200, 201):
-            raise UpdateFailed(f"{method} {path} failed {resp.status}: {text}")
+            classification = self._classify_endpoint_issue(status=resp.status, body=text)
+            raise HikvisionEndpointError(method=method, path=path, status=resp.status, body=text, classification=classification)
 
         try:
             return ET.fromstring(text)
@@ -376,14 +430,19 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             return text
 
     async def request_bytes(self, method: str, path: str, data: str | None = None) -> bytes:
-        resp = await self._request_raw(method, path, data=data)
+        try:
+            resp = await self._request_raw(method, path, data=data)
+        except Exception as err:
+            classification = self._classify_endpoint_issue(err=err)
+            raise HikvisionEndpointError(method=method, path=path, classification=classification, detail=str(err)) from err
         body = await resp.read()
         if resp.status not in (200, 201):
             try:
                 text = body.decode("utf-8", errors="ignore")
             except Exception:
                 text = "<binary>"
-            raise UpdateFailed(f"{method} {path} failed {resp.status}: {text}")
+            classification = self._classify_endpoint_issue(status=resp.status, body=text)
+            raise HikvisionEndpointError(method=method, path=path, status=resp.status, body=text, classification=classification)
         return body
 
     def _stream_rtsp_url(self, stream_id: str | int | None) -> str | None:
@@ -782,6 +841,20 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         )
         return any(marker in message for marker in markers)
 
+    def _log_optional_endpoint_issue(self, err: Exception, *, method: str, path: str, capability: str) -> None:
+        classification = getattr(err, "classification", None) or self._classify_endpoint_issue(err=err)
+        status = getattr(err, "status", None)
+        detail = getattr(err, "body", None) or getattr(err, "detail", None) or str(err)
+        level = "warn" if classification in {"unsupported", "missing", "forbidden"} else "error"
+        self._push_debug_event(
+            level=level,
+            category="backend",
+            event="optional_endpoint_unavailable",
+            message=f"Optional endpoint unavailable: {path}",
+            context={"capability": capability, **self._endpoint_issue_context(method=method, path=path, status=status, classification=classification, detail=detail)},
+            error=detail,
+        )
+
     async def _async_update_data(self):
         try:
             device_xml = await self.request("GET", "/ISAPI/System/deviceInfo?JumpChildDev=true")
@@ -795,22 +868,25 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             try:
                 storage_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage")
                 storage_info_supported = True
-            except Exception as err:
-                if not self._is_not_supported_error(err):
+            except HikvisionEndpointError as err:
+                self._log_optional_endpoint_issue(err, method="GET", path="/ISAPI/ContentMgmt/Storage", capability="storage_info")
+                if err.classification not in {"unsupported", "missing", "forbidden"}:
                     raise
 
             try:
                 storage_caps_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage/hdd/capabilities")
                 storage_hdd_caps_supported = True
-            except Exception as err:
-                if not self._is_not_supported_error(err):
+            except HikvisionEndpointError as err:
+                self._log_optional_endpoint_issue(err, method="GET", path="/ISAPI/ContentMgmt/Storage/hdd/capabilities", capability="storage_hdd_caps")
+                if err.classification not in {"unsupported", "missing", "forbidden"}:
                     raise
 
             try:
                 storage_extra_caps_xml = await self.request("GET", "/ISAPI/ContentMgmt/Storage/ExtraInfo/capabilities")
                 storage_extra_caps_supported = True
-            except Exception as err:
-                if not self._is_not_supported_error(err):
+            except HikvisionEndpointError as err:
+                self._log_optional_endpoint_issue(err, method="GET", path="/ISAPI/ContentMgmt/Storage/ExtraInfo/capabilities", capability="storage_extra_caps")
+                if err.classification not in {"unsupported", "missing", "forbidden"}:
                     storage_extra_caps_xml = None
                 else:
                     storage_extra_caps_xml = None
@@ -951,7 +1027,25 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 "capabilities": device_capabilities,
                 "alarm_states": dict((self.data or {}).get("alarm_states") or self._default_alarm_states()),
             }
+        except HikvisionEndpointError as err:
+            self._push_debug_event(
+                level="error",
+                category="backend",
+                event="required_endpoint_failed",
+                message=f"Required endpoint failed: {err.path}",
+                context=self._endpoint_issue_context(method=err.method, path=err.path, status=err.status, classification=err.classification, detail=err.body or err.detail),
+                error=err.body or err.detail or str(err),
+            )
+            raise UpdateFailed(f"Failed to refresh Hikvision data: [{err.classification}] {err}") from err
         except Exception as err:
+            self._push_debug_event(
+                level="error",
+                category="backend",
+                event="refresh_transport_error",
+                message="Unhandled refresh failure",
+                context={"classification": self._classify_endpoint_issue(err=err)},
+                error=str(err),
+            )
             raise UpdateFailed(f"Failed to refresh Hikvision data: {err}") from err
 
 
