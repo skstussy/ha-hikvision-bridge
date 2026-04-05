@@ -3,7 +3,6 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.websocket_api import async_register_command
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import config_validation as cv
@@ -33,7 +32,7 @@ from .websocket import (
     async_subscribe_debug,
 )
 
-SERVICE_DOMAINS = (DOMAIN, LEGACY_DOMAIN)
+SERVICE_DOMAINS = (DOMAIN,)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -57,17 +56,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for service_domain in SERVICE_DOMAINS:
         await _async_register_services(hass, service_domain)
         await _register_stream_service(hass, service_domain)
+    await coordinator.async_start_alarm_stream()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    async def _async_start_alarm_stream(_event=None) -> None:
-        await coordinator.async_start_alarm_stream()
-
-    if getattr(hass, "is_running", False):
-        hass.async_create_task(_async_start_alarm_stream())
-    else:
-        entry.async_on_unload(
-            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _async_start_alarm_stream)
-        )
     return True
 
 
