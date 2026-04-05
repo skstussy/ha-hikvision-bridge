@@ -207,6 +207,11 @@ class HikvisionNVRSystemInfoSensor(BaseNVREntity, SensorEntity):
             "last_event_state": self.coordinator.data.get("alarm_states", {}).get("last_event_state"),
             "active_alarm_inputs": [key.replace("alarm_input_", "") for key, value in self.coordinator.data.get("alarm_states", {}).items() if key.startswith("alarm_input_") and value],
             "supports_isapi": nvr.get("supports_isapi", True),
+            "storage_info_supported": storage.get("storage_info_supported", False),
+            "storage_hdd_caps_supported": storage.get("storage_hdd_caps_supported", False),
+            "storage_extra_caps_supported": storage.get("storage_extra_caps_supported", False),
+            "storage_present": storage.get("storage_present", False),
+            "playback_supported": storage.get("playback_supported", False),
         }
 
 
@@ -240,6 +245,11 @@ class HikvisionNVRStorageInfoSensor(BaseNVREntity, SensorEntity):
             "free_capacity_mb": storage.get("free_capacity_mb"),
             "storage_health": "ok" if int(storage.get("failed_disks", 0) or 0) == 0 else "warning",
             "hdds": storage.get("hdds", []),
+            "storage_info_supported": storage.get("storage_info_supported", False),
+            "storage_hdd_caps_supported": storage.get("storage_hdd_caps_supported", False),
+            "storage_extra_caps_supported": storage.get("storage_extra_caps_supported", False),
+            "storage_present": storage.get("storage_present", False),
+            "playback_supported": storage.get("playback_supported", False),
         }
 
 
