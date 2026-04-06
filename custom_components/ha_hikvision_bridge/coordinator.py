@@ -242,6 +242,52 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         self._debug_manager = HikvisionDebugManager(max_entries=300)
         self.session = async_get_clientsession(hass)
         self.digest = DigestAuth(self.username, self.password)
+        self.audio = HikvisionAudioManager(hass, self)
+        self.audio_classifier = HikvisionAudioClassifier()
+
+    async def async_ingest_audio_samples(self, camera_id: str, samples: list[int | float]) -> None:
+    self.audio.ingest_samples(str(camera_id), samples)
+    await self._maybe_run_audio_classifier(str(camera_id))
+    self.async_update_listeners()
+
+    async def _maybe_run_audio_classifier(self, camera_id: str) -> None:
+    state = self.audio.get_state(camera_id)
+    if not state:
+        return
+    if not state.get("classifier_enabled"):
+        return
+    if not (state.get("abnormal") or state.get("voice_detected")):
+        return
+
+    clip = self.audio.get_clip(camera_id)
+    result = await self.audio_classifier.classify_clip(camera_id, clip)
+    if not result:
+        return
+
+    state["classifier_label"] = result.get("label")
+    state["classifier_confidence"] = result.get("confidence", 0.0)
+
+    label = state["classifier_label"]
+    confidence = state["classifier_confidence"]
+    threshold = self.audio._config[str(camera_id)]["classifier_threshold"]
+
+    if confidence >= threshold:
+        state["last_event"] = f"audio_classifier_{label}"
+        push = getattr(self, "_push_debug_event", None)
+        if callable(push):
+            push(
+                {
+                    "source": "audio",
+                    "camera": camera_id,
+                    "category": "audio",
+                    "level": "info",
+                    "event": "audio_classifier_match",
+                    "details": {
+                        "label": label,
+                        "confidence": confidence,
+                    },
+                }
+            )
 
     def url(self, path: str) -> str:
         scheme = "https" if self.use_https else "http"
