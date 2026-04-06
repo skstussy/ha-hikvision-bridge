@@ -269,18 +269,206 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         camera = self.get_camera(cam_id)
         if not camera:
             return {}
+        stream_id = camera.get("stream_id")
         return {
             "profile": camera.get("stream_profile"),
             "requested_profile": camera.get("stream_profile_requested"),
             "resolved_profile": camera.get("stream_profile_resolved"),
             "options": list(camera.get("stream_profile_options") or []),
             "selection_source": camera.get("stream_profile_selection_source"),
-            "id": camera.get("stream_id"),
+            "id": stream_id,
+            "stream_id": stream_id,
+            "stream_name": camera.get("name"),
             "track_id": camera.get("track_id"),
             "rtsp_url": camera.get("rtsp_url"),
             "rtsp_direct_url": camera.get("rtsp_direct_url"),
             "rtsp_profile": camera.get("rtsp_profile"),
+            "transport": camera.get("transport"),
+            "video_codec": camera.get("video_codec"),
+            "width": camera.get("width"),
+            "height": camera.get("height"),
+            "bitrate_mode": camera.get("bitrate_mode"),
+            "constant_bitrate": camera.get("constant_bitrate"),
+            "max_frame_rate": camera.get("max_frame_rate"),
+            "audio_codec": camera.get("audio_codec"),
         }
+
+    def get_selected_stream_profile(self, cam_id: str) -> str:
+        """Return the selected stream profile for a camera."""
+        camera = self.get_camera(cam_id)
+        return normalize_stream_profile(camera.get("stream_profile"))
+
+    def set_stream_profile(self, cam_id: str, profile: str) -> None:
+        """Compatibility wrapper for entity/service callers expecting a sync API."""
+        self.hass.async_create_task(self.async_set_stream_profile(cam_id, profile))
+
+    async def snapshot_image(self, cam_id: str) -> bytes | None:
+        """Fetch a JPEG snapshot for a camera channel."""
+        camera = self.get_camera(cam_id)
+        stream_id = camera.get("stream_id") or f"{cam_id}01"
+        path = f"/ISAPI/Streaming/channels/{stream_id}/picture"
+        url = self.url(path)
+        auth_header = await self.digest.async_get_authorization(
+            self.session,
+            "GET",
+            url,
+            verify_ssl=self.verify_ssl,
+        )
+        async with self.session.get(
+            url,
+            headers={"Authorization": auth_header},
+            ssl=self.verify_ssl,
+        ) as resp:
+            if resp.status != 200:
+                raise HikvisionEndpointError(
+                    method="GET",
+                    path=path,
+                    status=resp.status,
+                    body=(await resp.text())[:1000],
+                    classification="http_error",
+                )
+            return await resp.read()
+
+    async def ptz(self, cam_id: str, pan: int = 0, tilt: int = 0, duration: int = 500) -> None:
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_service_unimplemented",
+            message="PTZ service is not implemented in this build",
+            camera_id=str(cam_id),
+            context={"pan": pan, "tilt": tilt, "duration": duration},
+        )
+        raise UpdateFailed("PTZ service is not implemented in this build")
+
+    async def goto_preset(self, cam_id: str, preset: int) -> None:
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_preset_unimplemented",
+            message="PTZ preset service is not implemented in this build",
+            camera_id=str(cam_id),
+            context={"preset": preset},
+        )
+        raise UpdateFailed("PTZ preset service is not implemented in this build")
+
+    async def focus(self, cam_id: str, direction: int = 1, speed: int = 60, duration: int = 500) -> None:
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_focus_unimplemented",
+            message="PTZ focus service is not implemented in this build",
+            camera_id=str(cam_id),
+            context={"direction": direction, "speed": speed, "duration": duration},
+        )
+        raise UpdateFailed("PTZ focus service is not implemented in this build")
+
+    async def iris(self, cam_id: str, direction: int = 1, speed: int = 60, duration: int = 500) -> None:
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_iris_unimplemented",
+            message="PTZ iris service is not implemented in this build",
+            camera_id=str(cam_id),
+            context={"direction": direction, "speed": speed, "duration": duration},
+        )
+        raise UpdateFailed("PTZ iris service is not implemented in this build")
+
+    async def zoom(self, cam_id: str, direction: int = 1, speed: int = 50, duration: int = 500) -> None:
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_zoom_unimplemented",
+            message="PTZ zoom service is not implemented in this build",
+            camera_id=str(cam_id),
+            context={"direction": direction, "speed": speed, "duration": duration},
+        )
+        raise UpdateFailed("PTZ zoom service is not implemented in this build")
+
+    async def return_to_center(
+        self,
+        cam_id: str,
+        state: dict | None = None,
+        speed: int = 50,
+        duration: int = 350,
+        step_delay: int = 150,
+    ) -> None:
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_return_home_unimplemented",
+            message="PTZ return-to-center service is not implemented in this build",
+            camera_id=str(cam_id),
+            context={
+                "state": state or {},
+                "speed": speed,
+                "duration": duration,
+                "step_delay": step_delay,
+            },
+        )
+        raise UpdateFailed("PTZ return-to-center service is not implemented in this build")
+
+    async def search_playback_uri(
+        self,
+        cam_id: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> dict:
+        """Compatibility wrapper for playback search callers."""
+        return await self.async_playback_seek(cam_id, start=start, end=end)
+
+    async def async_start_native_audio_stream(
+        self,
+        cam_id: str,
+        *,
+        profile: str = "active",
+        ffmpeg_path: str = "ffmpeg",
+        sample_rate: int = 8000,
+        chunk_size: int = 3200,
+        enable_classifier: bool = True,
+    ) -> None:
+        camera = self.get_camera(cam_id)
+        if not camera:
+            raise UpdateFailed(f"Unknown camera {cam_id}")
+
+        selected_profile = str(profile or "active").lower()
+        if selected_profile == "active":
+            stream = self.get_active_stream(cam_id)
+        else:
+            profiles = self.get_stream_profiles(cam_id)
+            stream = dict(profiles.get(normalize_stream_profile(selected_profile)) or {})
+            if stream:
+                stream.setdefault("rtsp_url", build_rtsp_url(
+                    self.username,
+                    self.password,
+                    self.host,
+                    stream.get("id"),
+                    self.rtsp_port,
+                ))
+                stream.setdefault("rtsp_direct_url", build_rtsp_direct_url(
+                    self.username,
+                    self.password,
+                    self.host,
+                    stream.get("id"),
+                    self.rtsp_port,
+                ))
+        stream_url = stream.get("rtsp_url") or stream.get("rtsp_direct_url") or camera.get("rtsp_url") or camera.get("rtsp_direct_url")
+        if not stream_url:
+            raise UpdateFailed(f"No RTSP stream URL available for camera {cam_id}")
+
+        self.audio.ensure_camera(str(cam_id))
+        self.audio.set_enabled(str(cam_id), True)
+        if enable_classifier:
+            self.audio.set_classifier_enabled(str(cam_id), True)
+
+        await self.audio.async_start_native_stream(
+            str(cam_id),
+            stream_url=stream_url,
+            ffmpeg_path=ffmpeg_path,
+            sample_rate=sample_rate,
+            chunk_size=chunk_size,
+            source="rtsp",
+            profile=selected_profile,
+            audio_codec=stream.get("audio_codec"),
+        )
+        self.async_update_listeners()
+
+    async def async_stop_native_audio_stream(self, cam_id: str) -> None:
+        await self.audio.async_stop_native_stream(str(cam_id))
+        self.async_update_listeners()
 
     def get_playback_debug(self, cam_id: str) -> list[dict]:
         return list(self._playback_debug_by_camera.get(str(cam_id), []))
