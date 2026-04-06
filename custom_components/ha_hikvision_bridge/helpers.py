@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from .const import (
     DEFAULT_STREAM_PROFILE,
@@ -13,17 +14,82 @@ from .const import (
 HK_NS = "http://www.hikvision.com/ver20/XMLSchema"
 
 
-def safe_find_text(xml_obj: Any, tag: str, default: str | None = None) -> str | None:
+def _local_name(tag: str | None) -> str:
+    raw = str(tag or "")
+    if "}" in raw:
+        raw = raw.rsplit("}", 1)[-1]
+    if ":" in raw:
+        raw = raw.rsplit(":", 1)[-1]
+    return raw
+
+
+def _iter_elements_by_local_name(xml_obj: Any, *names: str):
+    if xml_obj is None:
+        return
+    wanted = {str(name) for name in names if str(name)}
+    if not wanted:
+        return
+    for elem in xml_obj.iter():
+        if _local_name(getattr(elem, "tag", None)) in wanted:
+            yield elem
+
+
+def safe_find_text(
+    xml_obj: Any,
+    tag: str,
+    default: str | None = None,
+    namespace: dict[str, str] | None = None,
+) -> str | None:
+    if isinstance(default, dict) and namespace is None:
+        namespace = default
+        default = None
+
     if xml_obj is None:
         return default
-    try:
-        value = xml_obj.findtext(f".//{{{HK_NS}}}{tag}")
-    except Exception:
-        return default
-    if value is None:
-        return default
-    value = value.strip()
-    return value or default
+
+    local_tag = _local_name(tag)
+    search_paths: list[tuple[str, dict[str, str] | None]] = []
+
+    if namespace and ":" in str(tag):
+        search_paths.append((f".//{tag}", namespace))
+    if str(tag):
+        search_paths.append((f".//{tag}", namespace))
+    if local_tag:
+        search_paths.append((f".//{{{HK_NS}}}{local_tag}", None))
+        search_paths.append((f".//{local_tag}", None))
+
+    seen: set[tuple[str, tuple[tuple[str, str], ...] | None]] = set()
+    for path, ns in search_paths:
+        ns_key = tuple(sorted((ns or {}).items())) or None
+        cache_key = (path, ns_key)
+        if cache_key in seen:
+            continue
+        seen.add(cache_key)
+        try:
+            value = xml_obj.findtext(path, default=None, namespaces=ns)
+        except TypeError:
+            try:
+                value = xml_obj.findtext(path, namespaces=ns)
+            except Exception:
+                value = None
+        except Exception:
+            value = None
+        if value is not None:
+            value = value.strip()
+            if value:
+                return value
+
+    for elem in xml_obj.iter():
+        if _local_name(getattr(elem, "tag", None)) != local_tag:
+            continue
+        value = getattr(elem, "text", None)
+        if value is None:
+            continue
+        value = value.strip()
+        if value:
+            return value
+
+    return default
 
 
 def get_dvr_serial(coordinator, entry) -> str:
@@ -113,6 +179,69 @@ def normalize_stream_profile(profile: str | None) -> str:
     return value if value in STREAM_PROFILE_OPTIONS else DEFAULT_STREAM_PROFILE
 
 
+def parse_input_proxy_channels(xml_obj: ET.Element | None) -> list[dict[str, Any]]:
+    channels: list[dict[str, Any]] = []
+    if xml_obj is None:
+        return channels
+
+    for channel in _iter_elements_by_local_name(xml_obj, "InputProxyChannel"):
+        cam_id = safe_find_text(channel, "id")
+        if not cam_id:
+            continue
+        channels.append(
+            {
+                "id": str(cam_id),
+                "name": safe_find_text(channel, "name", f"Camera {cam_id}") or f"Camera {cam_id}",
+                "online": coerce_bool(safe_find_text(channel, "online"), default=True),
+                "enabled": coerce_bool(safe_find_text(channel, "enabled"), default=True),
+                "model": safe_find_text(channel, "model"),
+                "serial_number": safe_find_text(channel, "serialNumber"),
+                "firmware_version": safe_find_text(channel, "firmwareVersion"),
+            }
+        )
+    return channels
+
+
+def parse_streaming_channels(xml_obj: ET.Element | None) -> dict[str, list[dict[str, Any]]]:
+    streams_by_camera: dict[str, list[dict[str, Any]]] = {}
+    if xml_obj is None:
+        return streams_by_camera
+
+    for channel in _iter_elements_by_local_name(xml_obj, "StreamingChannel"):
+        stream_id = safe_find_text(channel, "id")
+        if not stream_id:
+            continue
+
+        digits = "".join(ch for ch in str(stream_id) if ch.isdigit())
+        if len(digits) >= 3:
+            cam_id = str(int(digits[:-2]))
+        else:
+            cam_id = str(stream_id)
+
+        entry = {
+            "id": str(stream_id),
+            "stream_id": str(stream_id),
+            "track_id": safe_find_text(channel, "trackID") or str(stream_id),
+            "name": safe_find_text(channel, "channelName") or safe_find_text(channel, "name") or f"Stream {stream_id}",
+            "profile": classify_stream_profile(stream_id),
+            "video_enabled": coerce_bool(
+                safe_find_text(channel, "enabled") or safe_find_text(channel, "videoEnabled"),
+                default=True,
+            ),
+            "transport": safe_find_text(channel, "transportType") or safe_find_text(channel, "TransportType"),
+            "video_codec": safe_find_text(channel, "videoCodecType"),
+            "width": safe_find_text(channel, "videoResolutionWidth"),
+            "height": safe_find_text(channel, "videoResolutionHeight"),
+            "bitrate_mode": safe_find_text(channel, "videoBitRateType"),
+            "constant_bitrate": safe_find_text(channel, "vbrUpperCap") or safe_find_text(channel, "constantBitRate"),
+            "max_frame_rate": safe_find_text(channel, "maxFrameRate"),
+            "audio_codec": safe_find_text(channel, "audioCompressionType"),
+        }
+        streams_by_camera.setdefault(cam_id, []).append(entry)
+
+    return streams_by_camera
+
+
 def build_stream_profile_map(streams_for_camera: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     if not streams_for_camera:
         return {}
@@ -140,8 +269,33 @@ def build_stream_profile_map(streams_for_camera: list[dict[str, Any]]) -> dict[s
 def choose_stream_by_profile(streams_for_camera: list[dict[str, Any]], profile: str | None) -> dict[str, Any]:
     profiles = build_stream_profile_map(streams_for_camera)
     selected = normalize_stream_profile(profile)
-    return profiles.get(selected) or profiles.get(DEFAULT_STREAM_PROFILE) or next(iter(profiles.values()), {})
+    selected_stream = profiles.get(selected)
+    selection_source = "requested"
 
+    if selected_stream is None:
+        selected_stream = profiles.get(DEFAULT_STREAM_PROFILE)
+        selection_source = f"fallback_{DEFAULT_STREAM_PROFILE}"
+
+    if selected_stream is None and profiles:
+        selected_stream = next(iter(profiles.values()))
+        selection_source = "fallback_first"
+
+    if selected_stream is None:
+        return {
+            "available_profiles": [],
+            "profile_map": {},
+            "selection_source": "unavailable",
+        }
+
+    selected_stream = dict(selected_stream)
+    selected_stream["available_profiles"] = sorted(list(profiles.keys()))
+    selected_stream["profile_map"] = {
+        profile_name: stream.get("stream_id")
+        for profile_name, stream in profiles.items()
+        if stream.get("stream_id")
+    }
+    selected_stream["selection_source"] = selection_source
+    return selected_stream
 
 
 def build_nvr_device_info(dvr_serial: str, entry: Any, device_xml: Any) -> dict[str, Any]:
@@ -236,7 +390,6 @@ def parse_storage_capabilities_xml(storage_caps_xml: Any) -> dict[str, Any]:
                     return default
                 value = value.strip()
                 return value or default
-
             capacity = int(ftext("capacity", "0") or 0)
             free_space = int(ftext("freeSpace", "0") or 0)
             status = ftext("status", "unknown")
@@ -253,14 +406,13 @@ def parse_storage_capabilities_xml(storage_caps_xml: Any) -> dict[str, Any]:
                 "manufacturer": ftext("manufacturer"),
             }
             hdds.append(disk)
-        if hdds:
-            result["hdds"] = hdds
-            result["disk_count"] = len(hdds)
-            result["healthy_disks"] = sum(1 for d in hdds if str(d.get("status", "")).lower() in {"ok", "normal", "healthy"})
-            result["failed_disks"] = sum(1 for d in hdds if str(d.get("status", "")).lower() not in {"ok", "normal", "healthy"})
-            result["total_capacity_mb"] = sum(int(d.get("capacity_mb", 0) or 0) for d in hdds)
-            result["free_capacity_mb"] = sum(int(d.get("free_space_mb", 0) or 0) for d in hdds)
-            result["used_capacity_mb"] = sum(int(d.get("used_space_mb", 0) or 0) for d in hdds)
+        result["hdds"] = hdds
+        result["disk_count"] = len(hdds)
+        result["healthy_disks"] = sum(1 for d in hdds if str(d.get("status", "")).lower() in {"ok", "normal", "healthy"})
+        result["failed_disks"] = sum(1 for d in hdds if str(d.get("status", "")).lower() not in {"ok", "normal", "healthy"})
+        result["total_capacity_mb"] = sum(int(d.get("capacity_mb", 0) or 0) for d in hdds)
+        result["free_capacity_mb"] = sum(int(d.get("free_space_mb", 0) or 0) for d in hdds)
+        result["used_capacity_mb"] = sum(int(d.get("used_space_mb", 0) or 0) for d in hdds)
     except Exception:
         return result
     return result
