@@ -170,3 +170,93 @@ playback_stop:
       description: Camera entity currently in playback mode
       required: true
       example: camera.front_yard
+
+audio_enable:
+  name: Enable audio analytics
+  description: Enable backend audio analytics for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_disable:
+  name: Disable audio analytics
+  description: Disable backend audio analytics for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_recalibrate:
+  name: Recalibrate audio baseline
+  description: Reset the baseline to the current ambient audio conditions.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_capture_clip:
+  name: Capture audio clip
+  description: Capture the current buffered audio clip for diagnostics.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_enable_classifier:
+  name: Enable audio classifier
+  description: Enable triggered clip classification for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_disable_classifier:
+  name: Disable audio classifier
+  description: Disable triggered clip classification for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_set_threshold:
+  name: Set audio thresholds
+  description: Update audio analytics thresholds for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    abnormal_multiplier:
+      name: Abnormal multiplier
+      required: false
+      example: 2.5
+    silence_threshold:
+      name: Silence threshold
+      required: false
+      example: 0.02
+    clipping_threshold:
+      name: Clipping threshold
+      required: false
+      example: 0.98
+    voice_threshold:
+      name: Voice threshold
+      required: false
+      example: 0.04
+    classifier_threshold:
+      name: Classifier threshold
+      required: false
+      example: 0.7
