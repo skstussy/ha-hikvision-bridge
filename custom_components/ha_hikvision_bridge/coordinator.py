@@ -31,13 +31,23 @@ from .const import (
     DOMAIN,
 )
 from .digest import DigestAuth
-from .helpers import build_rtsp_direct_url, build_rtsp_url, build_stream_profile_map, choose_stream_by_profile, coerce_bool, inject_rtsp_credentials, normalize_stream_profile, parse_storage_capabilities_xml, parse_storage_xml, safe_find_text
+from .helpers import (
+    build_rtsp_direct_url,
+    build_rtsp_url,
+    build_stream_profile_map,
+    choose_stream_by_profile,
+    coerce_bool,
+    inject_rtsp_credentials,
+    normalize_stream_profile,
+    parse_input_proxy_channels,
+    parse_storage_capabilities_xml,
+    parse_storage_xml,
+    parse_streaming_channels,
+    safe_find_text,
+)
 from .debug import HikvisionDebugManager, sanitize_debug
 
 _LOGGER = logging.getLogger(__name__)
-
-NS = {"hk": "http://www.hikvision.com/ver20/XMLSchema"}
-STREAM_NS = {"isapi": "http://www.isapi.org/ver20/XMLSchema"}
 
 
 class HikvisionEndpointError(UpdateFailed):
@@ -248,7 +258,32 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         scheme = "https" if self.use_https else "http"
         return f"{scheme}://{self.host}:{self.port}{path}"
 
+    async def async_get_webrtc_url(self, cam_id: str) -> str | None:
+        camera = self.get_camera(cam_id)
+        if not camera:
+            return None
 
+        stream_url = camera.get("rtsp_direct_url") or camera.get("rtsp_url")
+        if not stream_url:
+            return None
+
+        stream_url = inject_rtsp_credentials(
+            stream_url,
+            self.username,
+            self.password,
+            default_port=self.rtsp_port,
+        )
+
+        path = self.entry.options.get("webrtc_path") or self.entry.data.get("webrtc_path") or "/api/webrtc"
+        base = URL(path)
+        if not base.scheme:
+            if base.path.startswith("/"):
+                base = URL(f"/{base.path.lstrip('/')}")
+            else:
+                base = URL(f"/{base.path}")
+        query = dict(base.query)
+        query["src"] = stream_url
+        return str(base.with_query(query))
 
     def get_camera(self, cam_id: str) -> dict:
         """Return the current camera payload for a channel."""
@@ -624,82 +659,166 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         device_xml = await self._request_xml("GET", "/ISAPI/System/deviceInfo")
         data["device_xml"] = device_xml
 
-        proxy_channels = await self._request_xml(
+        proxy_channels_xml = await self._request_xml(
             "GET",
             "/ISAPI/ContentMgmt/InputProxy/channels",
         )
-
-        streaming_channels = await self._request_xml(
+        streaming_channels_xml = await self._request_xml(
             "GET",
             "/ISAPI/Streaming/channels",
         )
 
-        stream_profile_map = build_stream_profile_map(streaming_channels)
+        proxy_channels = parse_input_proxy_channels(proxy_channels_xml)
+        streams_by_camera = parse_streaming_channels(streaming_channels_xml)
 
-        for channel in proxy_channels.findall(".//hk:InputProxyChannel", NS):
-            cam_id = safe_find_text(channel, "hk:id", NS) or safe_find_text(channel, "id")
-            if not cam_id:
+        cameras_by_id: dict[str, dict] = {
+            str(channel.get("id")): dict(channel)
+            for channel in proxy_channels
+            if channel.get("id") is not None
+        }
+
+        for cam_id, streams_for_camera in streams_by_camera.items():
+            cameras_by_id.setdefault(
+                str(cam_id),
+                {
+                    "id": str(cam_id),
+                    "name": f"Camera {cam_id}",
+                    "online": True,
+                    "enabled": True,
+                    "model": None,
+                    "serial_number": None,
+                    "firmware_version": None,
+                },
+            )
+
+            camera_meta = cameras_by_id[str(cam_id)]
+            profile_name = self._stream_profile_by_camera.get(str(cam_id), DEFAULT_STREAM_PROFILE)
+            active_stream = choose_stream_by_profile(streams_for_camera, profile_name)
+
+            stream_id = active_stream.get("id")
+            rtsp_url = None
+            rtsp_direct_url = None
+            if stream_id:
+                rtsp_url = build_rtsp_url(
+                    self.username,
+                    self.password,
+                    self.host,
+                    stream_id,
+                    self.rtsp_port,
+                )
+                rtsp_direct_url = build_rtsp_direct_url(
+                    self.username,
+                    self.password,
+                    self.host,
+                    stream_id,
+                    self.rtsp_port,
+                )
+
+            camera_meta.update(
+                {
+                    "card_visible": True,
+                    "stream_profile": profile_name,
+                    "stream_profile_requested": profile_name,
+                    "stream_profile_resolved": normalize_stream_profile(active_stream.get("profile")),
+                    "stream_profile_options": active_stream.get("available_profiles", []),
+                    "stream_profile_map": active_stream.get("profile_map", {}),
+                    "stream_profile_selection_source": active_stream.get("selection_source"),
+                    "stream_id": stream_id,
+                    "track_id": active_stream.get("track_id"),
+                    "rtsp_url": rtsp_url,
+                    "rtsp_direct_url": rtsp_direct_url,
+                    "rtsp_profile": normalize_stream_profile(active_stream.get("profile")),
+                    "transport": active_stream.get("transport"),
+                    "video_codec": active_stream.get("video_codec"),
+                    "width": active_stream.get("width"),
+                    "height": active_stream.get("height"),
+                    "bitrate_mode": active_stream.get("bitrate_mode"),
+                    "constant_bitrate": active_stream.get("constant_bitrate"),
+                    "max_frame_rate": active_stream.get("max_frame_rate"),
+                    "audio_codec": active_stream.get("audio_codec"),
+                    "ptz_supported": False,
+                    "ptz_proxy_supported": False,
+                    "ptz_direct_supported": False,
+                    "ptz_control_method": "none",
+                    "ptz_capability_mode": "unknown",
+                    "ptz_implementation": "none",
+                    "ptz_proxy_ctrl_mode": None,
+                    "ptz_momentary_supported": False,
+                    "ptz_continuous_supported": False,
+                    "ptz_proxy_momentary_supported": False,
+                    "ptz_proxy_continuous_supported": False,
+                    "ptz_direct_momentary_supported": False,
+                    "ptz_direct_continuous_supported": False,
+                    "ptz_unsupported_reason": None,
+                }
+            )
+
+        for cam_id, camera_meta in list(cameras_by_id.items()):
+            if camera_meta.get("stream_id"):
                 continue
 
-            name = (
-                safe_find_text(channel, "hk:name", NS)
-                or safe_find_text(channel, "name")
-                or f"Camera {cam_id}"
+            profile_name = self._stream_profile_by_camera.get(str(cam_id), DEFAULT_STREAM_PROFILE)
+            stream_id = f"{cam_id}01"
+            camera_meta.update(
+                {
+                    "card_visible": True,
+                    "stream_profile": profile_name,
+                    "stream_profile_requested": profile_name,
+                    "stream_profile_resolved": DEFAULT_STREAM_PROFILE,
+                    "stream_profile_options": [DEFAULT_STREAM_PROFILE],
+                    "stream_profile_map": {DEFAULT_STREAM_PROFILE: stream_id},
+                    "stream_profile_selection_source": "implicit_main_stream",
+                    "stream_id": stream_id,
+                    "track_id": stream_id,
+                    "rtsp_url": build_rtsp_url(
+                        self.username,
+                        self.password,
+                        self.host,
+                        stream_id,
+                        self.rtsp_port,
+                    ),
+                    "rtsp_direct_url": build_rtsp_direct_url(
+                        self.username,
+                        self.password,
+                        self.host,
+                        stream_id,
+                        self.rtsp_port,
+                    ),
+                    "rtsp_profile": DEFAULT_STREAM_PROFILE,
+                    "transport": None,
+                    "video_codec": None,
+                    "width": None,
+                    "height": None,
+                    "bitrate_mode": None,
+                    "constant_bitrate": None,
+                    "max_frame_rate": None,
+                    "audio_codec": None,
+                    "ptz_supported": False,
+                    "ptz_proxy_supported": False,
+                    "ptz_direct_supported": False,
+                    "ptz_control_method": "none",
+                    "ptz_capability_mode": "unknown",
+                    "ptz_implementation": "none",
+                    "ptz_proxy_ctrl_mode": None,
+                    "ptz_momentary_supported": False,
+                    "ptz_continuous_supported": False,
+                    "ptz_proxy_momentary_supported": False,
+                    "ptz_proxy_continuous_supported": False,
+                    "ptz_direct_momentary_supported": False,
+                    "ptz_direct_continuous_supported": False,
+                    "ptz_unsupported_reason": None,
+                }
             )
 
-            online = coerce_bool(
-                safe_find_text(channel, "hk:online", NS) or safe_find_text(channel, "online"),
-                default=True,
+        data["cameras"] = [
+            cameras_by_id[cam_id]
+            for cam_id in sorted(
+                cameras_by_id,
+                key=lambda value: (
+                    int(value) if str(value).isdigit() else str(value),
+                ),
             )
-
-            active_profile = self._stream_profile_by_camera.get(str(cam_id), DEFAULT_STREAM_PROFILE)
-            active_stream = choose_stream_by_profile(stream_profile_map.get(str(cam_id), {}), active_profile)
-
-            camera = {
-                "id": str(cam_id),
-                "name": name,
-                "online": online,
-                "card_visible": True,
-                "stream_profile": active_profile,
-                "stream_profile_requested": active_profile,
-                "stream_profile_resolved": normalize_stream_profile(active_stream.get("profile")),
-                "stream_profile_options": active_stream.get("available_profiles", []),
-                "stream_profile_map": active_stream.get("profile_map", {}),
-                "stream_profile_selection_source": active_stream.get("selection_source"),
-                "stream_id": active_stream.get("id"),
-                "track_id": active_stream.get("track_id"),
-                "rtsp_url": build_rtsp_url(
-                    self.username,
-                    self.password,
-                    self.host,
-                    active_stream.get("id"),
-                    self.rtsp_port,
-                ),
-                "rtsp_direct_url": build_rtsp_direct_url(
-                    self.username,
-                    self.password,
-                    self.host,
-                    active_stream.get("id"),
-                    self.rtsp_port,
-                ),
-                "rtsp_profile": normalize_stream_profile(active_stream.get("profile")),
-                "ptz_supported": False,
-                "ptz_proxy_supported": False,
-                "ptz_direct_supported": False,
-                "ptz_control_method": "none",
-                "ptz_capability_mode": "unknown",
-                "ptz_implementation": "none",
-                "ptz_proxy_ctrl_mode": None,
-                "ptz_momentary_supported": False,
-                "ptz_continuous_supported": False,
-                "ptz_proxy_momentary_supported": False,
-                "ptz_proxy_continuous_supported": False,
-                "ptz_direct_momentary_supported": False,
-                "ptz_direct_continuous_supported": False,
-                "ptz_unsupported_reason": None,
-            }
-
-            data["cameras"].append(camera)
+        ]
 
         try:
             storage_xml = await self._request_xml("GET", "/ISAPI/ContentMgmt/Storage")
