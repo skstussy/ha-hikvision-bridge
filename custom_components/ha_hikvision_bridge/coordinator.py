@@ -13,6 +13,9 @@ from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.exceptions import HomeAssistantError
 
+from .audio import HikvisionAudioManager
+from .audio_classifier import HikvisionAudioClassifier
+
 from .const import (
     CONF_DEBUG_CATEGORIES,
     CONF_DEBUG_ENABLED,
