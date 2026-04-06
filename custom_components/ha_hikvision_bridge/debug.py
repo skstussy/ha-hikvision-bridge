@@ -102,6 +102,20 @@ class HikvisionDebugManager:
                 continue
         return payload
 
+    def clear(self, *, camera_id: str | None = None, entry_id: str | None = None) -> None:
+        if camera_id is None and entry_id is None:
+            self._events.clear()
+            return
+
+        kept: deque[dict[str, Any]] = deque(maxlen=self._events.maxlen)
+        for item in self._events:
+            matches_entry = entry_id is None or str(item.get("entry_id") or "") == str(entry_id)
+            matches_camera = camera_id is None or str(item.get("camera_id") or "") == str(camera_id)
+            if matches_entry and matches_camera:
+                continue
+            kept.append(item)
+        self._events = kept
+
     def get_events(self, *, camera_id: str | None = None, entry_id: str | None = None, limit: int = 150) -> list[dict[str, Any]]:
         events = list(self._events)
         if entry_id is not None:

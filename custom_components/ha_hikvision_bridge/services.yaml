@@ -170,3 +170,178 @@ playback_stop:
       description: Camera entity currently in playback mode
       required: true
       example: camera.front_yard
+
+audio_enable:
+  name: Enable audio analytics
+  description: Enable backend audio analytics for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_disable:
+  name: Disable audio analytics
+  description: Disable backend audio analytics for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_recalibrate:
+  name: Recalibrate audio baseline
+  description: Reset the baseline to the current ambient audio conditions.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_capture_clip:
+  name: Capture audio clip
+  description: Capture the current buffered audio clip for diagnostics.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_enable_classifier:
+  name: Enable audio classifier
+  description: Enable triggered clip classification for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_disable_classifier:
+  name: Disable audio classifier
+  description: Disable triggered clip classification for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_set_threshold:
+  name: Set audio thresholds
+  description: Update audio analytics thresholds for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    abnormal_multiplier:
+      name: Abnormal multiplier
+      required: false
+      example: 2.5
+    silence_threshold:
+      name: Silence threshold
+      required: false
+      example: 0.02
+    clipping_threshold:
+      name: Clipping threshold
+      required: false
+      example: 0.98
+    voice_threshold:
+      name: Voice threshold
+      required: false
+      example: 0.04
+    classifier_threshold:
+      name: Classifier threshold
+      required: false
+      example: 0.7
+
+audio_ingest_samples:
+  name: Ingest audio samples
+  description: Feed real numeric audio samples into the backend analytics pipeline for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    samples:
+      name: Samples
+      description: List of PCM-like numeric samples. Values in ranges -1..1, -32768..32767, or 0..255 are accepted.
+      required: true
+      example:
+        - 0.01
+        - 0.12
+        - 0.95
+        - 0.18
+    classifier:
+      name: Run classifier
+      description: Enable classifier processing for this ingest call if the camera classifier is currently disabled.
+      required: false
+      example: true
+
+
+audio_start_stream:
+  name: Start native audio stream
+  description: Start stream-native audio ingestion for a camera using ffmpeg against the camera RTSP path.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    profile:
+      name: Profile
+      description: Stream profile to tap. Use active, main, or sub.
+      required: false
+      example: active
+    ffmpeg_path:
+      name: FFmpeg path
+      description: ffmpeg binary path available to Home Assistant
+      required: false
+      example: ffmpeg
+    sample_rate:
+      name: Sample rate
+      description: PCM sample rate requested from ffmpeg
+      required: false
+      example: 8000
+    chunk_size:
+      name: Chunk size
+      description: PCM bytes read per ingest cycle
+      required: false
+      example: 3200
+    classifier:
+      name: Enable classifier
+      description: Enable the classifier when starting the stream
+      required: false
+      example: true
+
+audio_stop_stream:
+  name: Stop native audio stream
+  description: Stop stream-native audio ingestion for a camera.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_apply_calibration:
+  name: Apply audio calibration preset
+  description: Apply a Sentinel calibration preset for the selected camera.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    preset:
+      name: Preset
+      description: Calibration preset. Use quiet, balanced, or noisy.
+      required: false
+      example: balanced

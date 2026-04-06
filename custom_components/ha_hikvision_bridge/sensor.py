@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .helpers import build_camera_device_info, build_nvr_device_info, get_dvr_serial
+
+
+def _iso_from_ts(value):
+    try:
+        ts = float(value or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -19,8 +31,22 @@ async def async_setup_entry(hass, entry, async_add_entities):
         hdd_id = str(hdd.get("id") or len(entities))
         entities.append(HikvisionNVRHDDSensor(coordinator, entry, dvr_serial, hdd_id))
     for cam in coordinator.data.get("cameras", []):
-        entities.append(HikvisionCameraInfoSensor(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraStreamSensor(coordinator, dvr_serial, cam["id"]))
+        cam_id = cam["id"]
+        entities.extend(
+            [
+                HikvisionCameraInfoSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraStreamSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioLevelSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioPeakSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioAnomalySensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioClassifierLabelSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioClassifierConfidenceSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioClassifierThresholdSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioLastEventSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioStreamStatusSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraAudioLastGunshotSensor(coordinator, dvr_serial, cam_id),
+            ]
+        )
     async_add_entities(entities)
 
 
@@ -39,9 +65,65 @@ class BaseCameraEntity(CoordinatorEntity):
     def _stream_profiles(self):
         return self.coordinator.get_stream_profiles(self._cam_id)
 
+    def _audio_state(self):
+        return self.coordinator.audio.get_state(self._cam_id) or {}
+
+    def _audio_config(self):
+        return self.coordinator.audio.get_config(self._cam_id)
+
     @property
     def device_info(self):
         return DeviceInfo(**build_camera_device_info(self._dvr_serial, self._cam()))
+
+
+class BaseCameraAudioSensor(CoordinatorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id, name, key):
+        super().__init__(coordinator)
+        self._dvr_serial = dvr_serial
+        self._cam_id = str(cam_id)
+        self._key = key
+        self._attr_name = name
+        self._attr_has_entity_name = True
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{key}"
+
+    def _cam(self):
+        return next((c for c in self.coordinator.data.get("cameras", []) if str(c["id"]) == self._cam_id), {})
+
+    def _audio_state(self):
+        return self.coordinator.audio.get_state(self._cam_id) or {}
+
+    def _audio_config(self):
+        return self.coordinator.audio.get_config(self._cam_id)
+
+    @property
+    def device_info(self):
+        return DeviceInfo(**build_camera_device_info(self._dvr_serial, self._cam()))
+
+    @property
+    def native_value(self):
+        return self._audio_state().get(self._key)
+
+    @property
+    def extra_state_attributes(self):
+        state = self._audio_state()
+        cfg = self._audio_config()
+        return {
+            "channel": self._cam_id,
+            "enabled": state.get("enabled"),
+            "classifier_enabled": state.get("classifier_enabled"),
+            "frames_ingested": state.get("frames_ingested"),
+            "sample_count": state.get("sample_count"),
+            "native_stream_status": state.get("native_stream_status"),
+            "native_stream_profile": state.get("native_stream_profile"),
+            "native_stream_source": state.get("native_stream_source"),
+            "native_stream_audio_codec": state.get("native_stream_audio_codec"),
+            "native_stream_last_audio": _iso_from_ts(state.get("native_stream_last_audio_ts")),
+            "last_classifier_source": state.get("last_classifier_source"),
+            "last_classifier_accepted": state.get("last_classifier_accepted"),
+            "classifier_threshold": cfg.get("classifier_threshold"),
+            "calibration_profile": state.get("calibration_profile"),
+            "calibration_score": state.get("calibration_score"),
+        }
 
 
 class BaseNVREntity(CoordinatorEntity):
@@ -81,34 +163,22 @@ class HikvisionCameraInfoSensor(BaseCameraEntity, SensorEntity):
             "channel": cam.get("id"),
             "ip_address": cam.get("ip_address"),
             "manage_port": cam.get("manage_port"),
-            "src_input_port": cam.get("src_input_port"),
-            "username": cam.get("username"),
-            "proxy_protocol": cam.get("proxy_protocol"),
-            "addressing_format": cam.get("addressing_format"),
-            "connection_mode": cam.get("connection_mode"),
-            "stream_type": cam.get("stream_type"),
-            "model": cam.get("model"),
-            "serial_number": cam.get("serial_number"),
-            "firmware_version": cam.get("firmware_version"),
-            "device_id": cam.get("device_id"),
-            "dev_index": cam.get("dev_index"),
-            "certificate_validation_enabled": cam.get("certificate_validation_enabled"),
-            "default_admin_port_enabled": cam.get("default_admin_port_enabled"),
-            "timing_enabled": cam.get("timing_enabled"),
+            "online": cam.get("online"),
+            "card_visible": cam.get("card_visible"),
             "ptz_supported": cam.get("ptz_supported"),
             "ptz_proxy_supported": cam.get("ptz_proxy_supported"),
             "ptz_direct_supported": cam.get("ptz_direct_supported"),
             "ptz_control_method": cam.get("ptz_control_method"),
-            "ptz_enabled": cam.get("ptz_enabled"),
-            "ptz_online": cam.get("ptz_online"),
-            "online": cam.get("online"),
-            "card_visible": cam.get("card_visible"),
-            "rtsp_url": cam.get("rtsp_url"),
-            "rtsp_direct_url": cam.get("rtsp_direct_url"),
-            "stream_id": cam.get("stream_id"),
-            "stream_profile": cam.get("stream_profile"),
-            "main_stream_id": cam.get("main_stream_id"),
-            "sub_stream_id": cam.get("sub_stream_id"),
+            "ptz_capability_mode": cam.get("ptz_capability_mode"),
+            "ptz_implementation": cam.get("ptz_implementation"),
+            "ptz_proxy_ctrl_mode": cam.get("ptz_proxy_ctrl_mode"),
+            "ptz_momentary_supported": cam.get("ptz_momentary_supported"),
+            "ptz_continuous_supported": cam.get("ptz_continuous_supported"),
+            "ptz_proxy_momentary_supported": cam.get("ptz_proxy_momentary_supported"),
+            "ptz_proxy_continuous_supported": cam.get("ptz_proxy_continuous_supported"),
+            "ptz_direct_momentary_supported": cam.get("ptz_direct_momentary_supported"),
+            "ptz_direct_continuous_supported": cam.get("ptz_direct_continuous_supported"),
+            "ptz_unsupported_reason": cam.get("ptz_unsupported_reason"),
         }
 
 
@@ -118,52 +188,32 @@ class HikvisionCameraStreamSensor(BaseCameraEntity, SensorEntity):
         self._attr_has_entity_name = True
         self._attr_name = "Stream"
         self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_stream"
+        self._attr_icon = "mdi:cctv"
 
     @property
     def native_value(self):
         stream = self._stream()
-        codec = stream.get("video_codec") or "Unknown"
-        width = stream.get("width")
-        height = stream.get("height")
-        profile = self.coordinator.get_selected_stream_profile(self._cam_id)
-        label = "Main-stream" if profile == "main" else "Sub-stream"
-        if width and height:
-            return f"{label} · {codec} {width}x{height}"
-        return f"{label} · {codec}"
+        return stream.get("stream_profile") or "unknown"
 
     @property
     def extra_state_attributes(self):
         stream = self._stream()
-        profiles = self._stream_profiles()
-        profile = self.coordinator.get_selected_stream_profile(self._cam_id)
+        audio_state = self._audio_state()
         return {
             "channel": self._cam_id,
-            "stream_profile": profile,
-            "stream_profile_label": "Main-stream" if profile == "main" else "Sub-stream",
-            "available_stream_profiles": sorted(list(profiles.keys())),
-            "main_stream_id": (profiles.get("main") or {}).get("stream_id"),
-            "sub_stream_id": (profiles.get("sub") or {}).get("stream_id"),
-            "stream_id": stream.get("stream_id"),
-            "stream_name": stream.get("stream_name"),
-            "enabled": stream.get("enabled"),
+            "stream_id": stream.get("id"),
+            "stream_name": stream.get("name"),
+            "stream_profile": stream.get("stream_profile"),
             "transport": stream.get("transport"),
-            "video_enabled": stream.get("video_enabled"),
             "video_input_channel_id": stream.get("video_input_channel_id"),
-            "video_codec": stream.get("video_codec"),
-            "width": stream.get("width"),
-            "height": stream.get("height"),
-            "bitrate_mode": stream.get("bitrate_mode"),
-            "constant_bitrate": stream.get("constant_bitrate"),
-            "fixed_quality": stream.get("fixed_quality"),
-            "max_frame_rate_raw": stream.get("max_frame_rate_raw"),
-            "max_frame_rate": stream.get("max_frame_rate"),
-            "gov_length": stream.get("gov_length"),
-            "snapshot_image_type": stream.get("snapshot_image_type"),
             "audio_enabled": stream.get("audio_enabled"),
             "audio_input_channel_id": stream.get("audio_input_channel_id"),
             "audio_codec": stream.get("audio_codec"),
             "rtsp_url": stream.get("rtsp_url"),
             "rtsp_direct_url": stream.get("rtsp_direct_url"),
+            "native_stream_status": audio_state.get("native_stream_status"),
+            "native_stream_profile": audio_state.get("native_stream_profile"),
+            "native_stream_source": audio_state.get("native_stream_source"),
         }
 
 
@@ -189,24 +239,6 @@ class HikvisionNVRSystemInfoSensor(BaseNVREntity, SensorEntity):
             "manufacturer": nvr.get("manufacturer", "Hikvision"),
             "serial_number": nvr.get("serial_number"),
             "firmware_version": nvr.get("firmware_version"),
-            "firmware_released_date": nvr.get("firmware_released_date"),
-            "mac_address": nvr.get("mac_address"),
-            "device_id": nvr.get("device_id"),
-            "device_description": nvr.get("device_description"),
-            "boot_time": nvr.get("boot_time"),
-            "online": nvr.get("online", True),
-            "disk_mode": storage.get("disk_mode"),
-            "work_mode": storage.get("work_mode"),
-            "disk_count": storage.get("disk_count", 0),
-            "healthy_disks": storage.get("healthy_disks", 0),
-            "failed_disks": storage.get("failed_disks", 0),
-            "active_alarm_count": self.coordinator.data.get("alarm_states", {}).get("active_alarm_count", 0),
-            "alarm_stream_connected": self.coordinator.data.get("alarm_states", {}).get("stream_connected", False),
-            "last_event_type": self.coordinator.data.get("alarm_states", {}).get("last_event_type"),
-            "last_event_channel": self.coordinator.data.get("alarm_states", {}).get("last_event_channel"),
-            "last_event_state": self.coordinator.data.get("alarm_states", {}).get("last_event_state"),
-            "active_alarm_inputs": [key.replace("alarm_input_", "") for key, value in self.coordinator.data.get("alarm_states", {}).items() if key.startswith("alarm_input_") and value],
-            "supports_isapi": nvr.get("supports_isapi", True),
             "storage_info_supported": storage.get("storage_info_supported", False),
             "storage_hdd_caps_supported": storage.get("storage_hdd_caps_supported", False),
             "storage_extra_caps_supported": storage.get("storage_extra_caps_supported", False),
@@ -286,3 +318,99 @@ class HikvisionNVRHDDSensor(BaseNVREntity, SensorEntity):
             "free_space_mb": disk.get("free_space_mb"),
             "used_space_mb": disk.get("used_space_mb"),
         }
+
+
+class HikvisionCameraAudioLevelSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Level", "level")
+        self._attr_native_unit_of_measurement = "%"
+
+    @property
+    def native_value(self):
+        return round(float(self._audio_state().get("level") or 0.0) * 100.0, 2)
+
+
+class HikvisionCameraAudioPeakSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Peak", "peak")
+        self._attr_native_unit_of_measurement = "%"
+
+    @property
+    def native_value(self):
+        return round(float(self._audio_state().get("peak") or 0.0) * 100.0, 2)
+
+
+class HikvisionCameraAudioAnomalySensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Anomaly Score", "anomaly_score")
+
+    @property
+    def native_value(self):
+        return round(float(self._audio_state().get("anomaly_score") or 0.0), 3)
+
+
+class HikvisionCameraAudioClassifierLabelSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Label", "classifier_label")
+
+    @property
+    def extra_state_attributes(self):
+        attrs = dict(super().extra_state_attributes)
+        attrs["classifier_metrics"] = self._audio_state().get("classifier_metrics") or {}
+        return attrs
+
+
+class HikvisionCameraAudioLastEventSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Last Event", "last_event")
+
+
+class HikvisionCameraAudioClassifierConfidenceSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Confidence", "classifier_confidence")
+
+    @property
+    def native_value(self):
+        return round(float(self._audio_state().get("classifier_confidence") or 0.0), 3)
+
+
+class HikvisionCameraAudioClassifierThresholdSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Threshold", "classifier_threshold")
+
+    @property
+    def native_value(self):
+        return round(float(self._audio_config().get("classifier_threshold") or 0.0), 3)
+
+
+class HikvisionCameraAudioStreamStatusSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Stream Status", "native_stream_status")
+        self._attr_icon = "mdi:waveform"
+
+    @property
+    def extra_state_attributes(self):
+        attrs = dict(super().extra_state_attributes)
+        state = self._audio_state()
+        attrs.update(
+            {
+                "native_stream_error": state.get("native_stream_error"),
+                "native_stream_started_at": _iso_from_ts(state.get("native_stream_started_ts")),
+                "native_stream_last_audio": _iso_from_ts(state.get("native_stream_last_audio_ts")),
+                "native_stream_frames": state.get("native_stream_frames"),
+                "native_stream_bytes": state.get("native_stream_bytes"),
+                "native_stream_restart_count": state.get("native_stream_restart_count"),
+                "ffmpeg_path": state.get("native_stream_ffmpeg_path"),
+            }
+        )
+        return attrs
+
+
+class HikvisionCameraAudioLastGunshotSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Last Gunshot", "last_gunshot_ts")
+        self._attr_icon = "mdi:gunshot"
+
+    @property
+    def native_value(self):
+        return _iso_from_ts(self._audio_state().get("last_gunshot_ts"))

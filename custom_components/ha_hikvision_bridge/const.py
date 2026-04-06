@@ -12,6 +12,15 @@ DEFAULT_PORT_HTTPS = 443
 DEFAULT_RTSP_PORT = 554
 DEFAULT_VERIFY_SSL = False
 DEFAULT_USE_HTTPS = True
+DEFAULT_DEBUG_CATEGORIES = (
+    "playback",
+    "isapi",
+    "websocket",
+    "stream",
+    "alarm",
+    "ptz",
+    "audio",
+)
 
 PLATFORMS = ["sensor", "binary_sensor", "camera"]
 SERVICE_PTZ = "ptz"
@@ -24,6 +33,17 @@ SERVICE_SET_STREAM_MODE = "set_stream_mode"
 SERVICE_SET_STREAM_PROFILE = "set_stream_profile"
 SERVICE_PLAYBACK_SEEK = "playback_seek"
 SERVICE_PLAYBACK_STOP = "playback_stop"
+SERVICE_AUDIO_ENABLE = "audio_enable"
+SERVICE_AUDIO_DISABLE = "audio_disable"
+SERVICE_AUDIO_RECALIBRATE = "audio_recalibrate"
+SERVICE_AUDIO_CAPTURE_CLIP = "audio_capture_clip"
+SERVICE_AUDIO_ENABLE_CLASSIFIER = "audio_enable_classifier"
+SERVICE_AUDIO_DISABLE_CLASSIFIER = "audio_disable_classifier"
+SERVICE_AUDIO_SET_THRESHOLD = "audio_set_threshold"
+SERVICE_AUDIO_INGEST_SAMPLES = "audio_ingest_samples"
+SERVICE_AUDIO_START_STREAM = "audio_start_stream"
+SERVICE_AUDIO_STOP_STREAM = "audio_stop_stream"
+SERVICE_AUDIO_APPLY_CALIBRATION = "audio_apply_calibration"
 
 STREAM_MODE_WEBRTC = "webrtc"
 STREAM_MODE_RTSP = "rtsp"
@@ -40,4 +60,3 @@ STREAM_PROFILE_OPTIONS = (STREAM_PROFILE_MAIN, STREAM_PROFILE_SUB)
 
 CONF_DEBUG_ENABLED = "debug_enabled"
 CONF_DEBUG_CATEGORIES = "debug_categories"
-DEFAULT_DEBUG_CATEGORIES = ("playback", "isapi", "websocket", "stream", "alarm", "ptz")
