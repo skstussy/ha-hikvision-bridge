@@ -9,7 +9,6 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
-    LEGACY_DOMAIN,
     PLATFORMS,
     SERVICE_FOCUS,
     SERVICE_GOTO_PRESET,
@@ -26,8 +25,9 @@ from .coordinator import HikvisionCoordinator
 from .helpers import get_dvr_serial, safe_find_text
 from .websocket import (
     async_handle_get_debug_events,
-    async_handle_legacy_get_debug_events,
-    async_handle_legacy_webrtc_url,
+    async_handle_get_isapi_catalog,
+    async_handle_get_isapi_probe_results,
+    async_handle_run_isapi_probe,
     async_handle_webrtc_url,
     async_subscribe_debug,
 )
@@ -38,9 +38,10 @@ SERVICE_DOMAINS = (DOMAIN,)
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
     async_register_command(hass, async_handle_webrtc_url)
-    async_register_command(hass, async_handle_legacy_webrtc_url)
     async_register_command(hass, async_handle_get_debug_events)
-    async_register_command(hass, async_handle_legacy_get_debug_events)
+    async_register_command(hass, async_handle_get_isapi_catalog)
+    async_register_command(hass, async_handle_get_isapi_probe_results)
+    async_register_command(hass, async_handle_run_isapi_probe)
     async_register_command(hass, async_subscribe_debug)
     return True
 
