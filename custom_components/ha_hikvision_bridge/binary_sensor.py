@@ -70,7 +70,20 @@ class BaseCameraBinary(CoordinatorEntity, BinarySensorEntity):
             "ptz_unsupported_reason": cam.get("ptz_unsupported_reason"),
         }
 
+class BaseCameraAudioBinary(BaseCameraBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id, name, key):
+        super().__init__(coordinator, dvr_serial, cam_id)
+        self._audio_key = key
+        self._attr_name = name
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{key}"
 
+    def _audio_state(self):
+        return self.coordinator.audio.get_state(self._cam_id) or {}
+
+    @property
+    def is_on(self):
+        return bool(self._audio_state().get(self._audio_key, False))
+        
 class HikvisionCameraOnlineBinary(BaseCameraBinary):
     def __init__(self, coordinator, dvr_serial, cam_id):
         super().__init__(coordinator, dvr_serial, cam_id)
