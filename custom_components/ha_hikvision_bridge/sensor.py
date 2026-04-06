@@ -43,6 +43,30 @@ class BaseCameraEntity(CoordinatorEntity):
     def device_info(self):
         return DeviceInfo(**build_camera_device_info(self._dvr_serial, self._cam()))
 
+class BaseCameraAudioSensor(CoordinatorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id, name, key):
+        super().__init__(coordinator)
+        self._dvr_serial = dvr_serial
+        self._cam_id = str(cam_id)
+        self._key = key
+        self._attr_name = name
+        self._attr_has_entity_name = True
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{key}"
+
+    def _cam(self):
+        return next((c for c in self.coordinator.data.get("cameras", []) if str(c["id"]) == self._cam_id), {})
+
+    @property
+    def device_info(self):
+        from homeassistant.helpers.device_registry import DeviceInfo
+        from .helpers import build_camera_device_info
+        return DeviceInfo(**build_camera_device_info(self._dvr_serial, self._cam()))
+
+    @property
+    def native_value(self):
+        state = self.coordinator.audio.get_state(self._cam_id) or {}
+        return state.get(self._key)
+
 
 class BaseNVREntity(CoordinatorEntity):
     def __init__(self, coordinator, entry, dvr_serial):
