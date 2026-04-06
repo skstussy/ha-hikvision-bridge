@@ -246,48 +246,57 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         self.audio_classifier = HikvisionAudioClassifier()
 
     async def async_ingest_audio_samples(self, camera_id: str, samples: list[int | float]) -> None:
-    self.audio.ingest_samples(str(camera_id), samples)
-    await self._maybe_run_audio_classifier(str(camera_id))
-    self.async_update_listeners()
+        self.audio.ingest_samples(str(camera_id), samples)
+        await self._maybe_run_audio_classifier(str(camera_id))
+        self.async_update_listeners()
 
     async def _maybe_run_audio_classifier(self, camera_id: str) -> None:
-    state = self.audio.get_state(camera_id)
-    if not state:
-        return
-    if not state.get("classifier_enabled"):
-        return
-    if not (state.get("abnormal") or state.get("voice_detected")):
-        return
+        state = self.audio.get_state(camera_id)
+        if not state:
+            return
+        if not state.get("classifier_enabled"):
+            return
+        if not (state.get("abnormal") or state.get("voice_detected")):
+            return
 
-    clip = self.audio.get_clip(camera_id)
-    result = await self.audio_classifier.classify_clip(camera_id, clip)
-    if not result:
-        return
+        clip = self.audio.get_clip(camera_id)
+        result = await self.audio_classifier.classify_clip(camera_id, clip)
+        if not result:
+            return
 
-    state["classifier_label"] = result.get("label")
-    state["classifier_confidence"] = result.get("confidence", 0.0)
+        state["classifier_label"] = result.get("label")
+        state["classifier_confidence"] = result.get("confidence", 0.0)
 
-    label = state["classifier_label"]
-    confidence = state["classifier_confidence"]
-    threshold = self.audio._config[str(camera_id)]["classifier_threshold"]
+        label = state["classifier_label"]
+        confidence = state["classifier_confidence"]
+        threshold = self.audio._config[str(camera_id)]["classifier_threshold"]
 
-    if confidence >= threshold:
-        state["last_event"] = f"audio_classifier_{label}"
-        push = getattr(self, "_push_debug_event", None)
-        if callable(push):
-            push(
-                {
-                    "source": "audio",
-                    "camera": camera_id,
-                    "category": "audio",
-                    "level": "info",
-                    "event": "audio_classifier_match",
-                    "details": {
+        if confidence >= threshold:
+            state["last_event"] = f"audio_classifier_{label}"
+            push = getattr(self, "_push_debug_event", None)
+            if callable(push):
+                push(
+                    level="info",
+                    category="audio",
+                    event="audio_classifier_match",
+                    message=f"Audio classifier matched {label} for camera {camera_id}",
+                    camera_id=camera_id,
+                    context={
                         "label": label,
                         "confidence": confidence,
+                        "threshold": threshold,
                     },
-                }
+                )
+            self.hass.bus.async_fire(
+                f"{DOMAIN}_audio_detected",
+                {
+                    "camera_id": camera_id,
+                    "label": label,
+                    "confidence": confidence,
+                    "threshold": threshold,
+                },
             )
+        self.async_update_listeners()
 
     def url(self, path: str) -> str:
         scheme = "https" if self.use_https else "http"

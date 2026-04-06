@@ -149,18 +149,16 @@ class HikvisionAudioManager:
         push = getattr(self.coordinator, "_push_debug_event", None)
         if callable(push):
             push(
-                {
-                    "source": "audio",
-                    "camera": camera_id,
-                    "category": "audio",
-                    "level": "info",
-                    "event": event,
-                    "details": {
-                        "level": state["level"],
-                        "baseline": state["baseline"],
-                        "peak": state["peak"],
-                        "anomaly_score": state["anomaly_score"],
-                        "voice_detected": state["voice_detected"],
-                    },
-                }
+                level="info",
+                category="audio",
+                event=event,
+                message=f"Audio detection event for camera {camera_id}",
+                camera_id=camera_id,
+                context={
+                    "level": state["level"],
+                    "baseline": state["baseline"],
+                    "peak": state["peak"],
+                    "anomaly_score": state["anomaly_score"],
+                    "voice_detected": state["voice_detected"],
+                },
             )

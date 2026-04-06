@@ -56,4 +56,3 @@ STREAM_PROFILE_OPTIONS = (STREAM_PROFILE_MAIN, STREAM_PROFILE_SUB)
 
 CONF_DEBUG_ENABLED = "debug_enabled"
 CONF_DEBUG_CATEGORIES = "debug_categories"
-DEFAULT_DEBUG_CATEGORIES = ("playback", "isapi", "websocket", "stream", "alarm", "ptz")

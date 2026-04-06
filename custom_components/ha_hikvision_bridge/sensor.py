@@ -19,8 +19,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
         hdd_id = str(hdd.get("id") or len(entities))
         entities.append(HikvisionNVRHDDSensor(coordinator, entry, dvr_serial, hdd_id))
     for cam in coordinator.data.get("cameras", []):
-        entities.append(HikvisionCameraInfoSensor(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraStreamSensor(coordinator, dvr_serial, cam["id"]))
+        cam_id = cam["id"]
+        entities.append(HikvisionCameraInfoSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraStreamSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioLevelSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioPeakSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioAnomalySensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioClassifierLabelSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioLastEventSensor(coordinator, dvr_serial, cam_id))
     async_add_entities(entities)
 
 
@@ -320,3 +326,45 @@ class HikvisionNVRHDDSensor(BaseNVREntity, SensorEntity):
             "free_space_mb": disk.get("free_space_mb"),
             "used_space_mb": disk.get("used_space_mb"),
         }
+
+
+class HikvisionCameraAudioLevelSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Level", "level")
+        self._attr_native_unit_of_measurement = "%"
+
+    @property
+    def native_value(self):
+        state = self.coordinator.audio.get_state(self._cam_id) or {}
+        return round(float(state.get("level") or 0.0) * 100.0, 2)
+
+
+class HikvisionCameraAudioPeakSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Peak", "peak")
+        self._attr_native_unit_of_measurement = "%"
+
+    @property
+    def native_value(self):
+        state = self.coordinator.audio.get_state(self._cam_id) or {}
+        return round(float(state.get("peak") or 0.0) * 100.0, 2)
+
+
+class HikvisionCameraAudioAnomalySensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Anomaly Score", "anomaly_score")
+
+    @property
+    def native_value(self):
+        state = self.coordinator.audio.get_state(self._cam_id) or {}
+        return round(float(state.get("anomaly_score") or 0.0), 3)
+
+
+class HikvisionCameraAudioClassifierLabelSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Label", "classifier_label")
+
+
+class HikvisionCameraAudioLastEventSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Last Event", "last_event")

@@ -18,13 +18,23 @@ async def async_setup_entry(hass, entry, async_add_entities):
         HikvisionNVRDiskErrorBinary(coordinator, entry, dvr_serial),
     ]
     for cam in coordinator.data.get("cameras", []):
-        entities.append(HikvisionCameraOnlineBinary(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraPTZBinary(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraMotionBinary(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraVideoLossBinary(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraIntrusionBinary(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraLineCrossingBinary(coordinator, dvr_serial, cam["id"]))
-        entities.append(HikvisionCameraTamperBinary(coordinator, dvr_serial, cam["id"]))
+        cam_id = cam["id"]
+        entities.append(HikvisionCameraOnlineBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraPTZBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraMotionBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraVideoLossBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraIntrusionBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraLineCrossingBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraTamperBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioEnabledBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioClassifierEnabledBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioAbnormalBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioSilenceBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioClippingBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioVoiceDetectedBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioImpactDetectedBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioScreamDetectedBinary(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioShoutDetectedBinary(coordinator, dvr_serial, cam_id))
     for alarm_input in coordinator.data.get("alarm_inputs", []):
         entities.append(HikvisionNVRAlarmInputBinary(coordinator, entry, dvr_serial, alarm_input["id"]))
     async_add_entities(entities)
@@ -325,3 +335,55 @@ class HikvisionNVRAlarmInputBinary(BaseNVRBinary):
             "triggering": alarm_input.get("triggering"),
             "alarm_key": f"alarm_input_{self._input_id}",
         }
+
+
+class HikvisionCameraAudioEnabledBinary(BaseCameraAudioBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Enabled", "enabled")
+
+
+class HikvisionCameraAudioClassifierEnabledBinary(BaseCameraAudioBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Enabled", "classifier_enabled")
+
+
+class HikvisionCameraAudioAbnormalBinary(BaseCameraAudioBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Abnormal", "abnormal")
+        self._attr_device_class = "sound"
+
+
+class HikvisionCameraAudioSilenceBinary(BaseCameraAudioBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Silence", "silence")
+        self._attr_device_class = "sound"
+
+
+class HikvisionCameraAudioClippingBinary(BaseCameraAudioBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Clipping", "clipping")
+        self._attr_device_class = "problem"
+
+
+class HikvisionCameraAudioVoiceDetectedBinary(BaseCameraAudioBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Voice Detected", "voice_detected")
+        self._attr_device_class = "sound"
+
+
+class HikvisionCameraAudioImpactDetectedBinary(HikvisionCameraAudioLabelBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "impact", "Audio Impact Detected")
+        self._attr_device_class = "sound"
+
+
+class HikvisionCameraAudioScreamDetectedBinary(HikvisionCameraAudioLabelBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "scream", "Audio Scream Detected")
+        self._attr_device_class = "sound"
+
+
+class HikvisionCameraAudioShoutDetectedBinary(HikvisionCameraAudioLabelBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "shout", "Audio Shout Detected")
+        self._attr_device_class = "sound"

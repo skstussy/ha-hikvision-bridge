@@ -20,6 +20,13 @@ from .const import (
     SERVICE_SET_STREAM_PROFILE,
     SERVICE_PLAYBACK_SEEK,
     SERVICE_PLAYBACK_STOP,
+    SERVICE_AUDIO_ENABLE,
+    SERVICE_AUDIO_DISABLE,
+    SERVICE_AUDIO_RECALIBRATE,
+    SERVICE_AUDIO_CAPTURE_CLIP,
+    SERVICE_AUDIO_ENABLE_CLASSIFIER,
+    SERVICE_AUDIO_DISABLE_CLASSIFIER,
+    SERVICE_AUDIO_SET_THRESHOLD,
 )
 from .coordinator import HikvisionCoordinator
 from .helpers import get_dvr_serial, safe_find_text
@@ -83,6 +90,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_STREAM_PROFILE,
                 SERVICE_PLAYBACK_SEEK,
                 SERVICE_PLAYBACK_STOP,
+                SERVICE_AUDIO_ENABLE,
+                SERVICE_AUDIO_DISABLE,
+                SERVICE_AUDIO_RECALIBRATE,
+                SERVICE_AUDIO_CAPTURE_CLIP,
+                SERVICE_AUDIO_ENABLE_CLASSIFIER,
+                SERVICE_AUDIO_DISABLE_CLASSIFIER,
+                SERVICE_AUDIO_SET_THRESHOLD,
             ):
                 if hass.services.has_service(service_domain, service):
                     hass.services.async_remove(service_domain, service)
@@ -199,16 +213,12 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
         push = getattr(coordinator, "_push_debug_event", None)
         if callable(push):
             push(
-                {
-                    "source": "audio",
-                    "camera": channel,
-                    "category": "audio",
-                    "level": "info",
-                    "event": "audio_clip_captured",
-                    "details": {
-                        "frames": len(clip),
-                    },
-                }
+                level="info",
+                category="audio",
+                event="audio_clip_captured",
+                message=f"Audio clip captured for camera {channel}",
+                camera_id=channel,
+                context={"frames": len(clip)},
             )
 
     async def audio_set_threshold_service(call: ServiceCall) -> None:
@@ -304,6 +314,74 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
                 vol.Optional("entry_id"): cv.string,
             }
         ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_ENABLE,
+        audio_enable_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_DISABLE,
+        audio_disable_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_RECALIBRATE,
+        audio_recalibrate_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_CAPTURE_CLIP,
+        audio_capture_clip_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_ENABLE_CLASSIFIER,
+        audio_enable_classifier_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_DISABLE_CLASSIFIER,
+        audio_disable_classifier_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_SET_THRESHOLD,
+        audio_set_threshold_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Optional("abnormal_multiplier"): vol.Coerce(float),
+            vol.Optional("silence_threshold"): vol.Coerce(float),
+            vol.Optional("clipping_threshold"): vol.Coerce(float),
+            vol.Optional("voice_threshold"): vol.Coerce(float),
+            vol.Optional("classifier_threshold"): vol.Coerce(float),
+            vol.Optional("entry_id"): cv.string,
+        }),
     )
 
 
