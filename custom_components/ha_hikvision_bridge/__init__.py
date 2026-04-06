@@ -27,6 +27,7 @@ from .const import (
     SERVICE_AUDIO_ENABLE_CLASSIFIER,
     SERVICE_AUDIO_DISABLE_CLASSIFIER,
     SERVICE_AUDIO_SET_THRESHOLD,
+    SERVICE_AUDIO_INGEST_SAMPLES,
 )
 from .coordinator import HikvisionCoordinator
 from .helpers import get_dvr_serial, safe_find_text
@@ -97,6 +98,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_AUDIO_ENABLE_CLASSIFIER,
                 SERVICE_AUDIO_DISABLE_CLASSIFIER,
                 SERVICE_AUDIO_SET_THRESHOLD,
+                SERVICE_AUDIO_INGEST_SAMPLES,
             ):
                 if hass.services.has_service(service_domain, service):
                     hass.services.async_remove(service_domain, service)
@@ -188,23 +190,58 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
 
     async def audio_enable_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
-        coordinator.audio.set_enabled(str(call.data["channel"]), True)
+        channel = str(call.data["channel"])
+        coordinator.audio.set_enabled(channel, True)
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_enabled",
+            message=f"Audio analytics enabled for camera {channel}",
+            camera_id=channel,
+        )
 
     async def audio_disable_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
-        coordinator.audio.set_enabled(str(call.data["channel"]), False)
+        channel = str(call.data["channel"])
+        coordinator.audio.set_enabled(channel, False)
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_disabled",
+            message=f"Audio analytics disabled for camera {channel}",
+            camera_id=channel,
+        )
 
     async def audio_recalibrate_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
-        coordinator.audio.recalibrate(str(call.data["channel"]))
+        channel = str(call.data["channel"])
+        coordinator.audio.recalibrate(channel)
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_recalibrated",
+            message=f"Audio baseline recalibrated for camera {channel}",
+            camera_id=channel,
+        )
 
     async def audio_enable_classifier_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
-        coordinator.audio.set_classifier_enabled(str(call.data["channel"]), True)
+        channel = str(call.data["channel"])
+        coordinator.audio.set_classifier_enabled(channel, True)
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_classifier_enabled",
+            message=f"Audio classifier enabled for camera {channel}",
+            camera_id=channel,
+        )
 
     async def audio_disable_classifier_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
-        coordinator.audio.set_classifier_enabled(str(call.data["channel"]), False)
+        channel = str(call.data["channel"])
+        coordinator.audio.set_classifier_enabled(channel, False)
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_classifier_disabled",
+            message=f"Audio classifier disabled for camera {channel}",
+            camera_id=channel,
+        )
 
     async def audio_capture_clip_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
@@ -223,14 +260,34 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
 
     async def audio_set_threshold_service(call: ServiceCall) -> None:
         coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
         coordinator.audio.set_thresholds(
-            str(call.data["channel"]),
+            channel,
             abnormal_multiplier=call.data.get("abnormal_multiplier"),
             silence_threshold=call.data.get("silence_threshold"),
             clipping_threshold=call.data.get("clipping_threshold"),
             voice_threshold=call.data.get("voice_threshold"),
             classifier_threshold=call.data.get("classifier_threshold"),
         )
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_thresholds_updated",
+            message=f"Audio thresholds updated for camera {channel}",
+            camera_id=channel,
+            context={key: value for key, value in call.data.items() if key not in {"entry_id"}},
+        )
+
+    async def audio_ingest_samples_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        samples = [float(sample) for sample in call.data.get("samples", [])]
+        if not coordinator.audio.get_state(channel):
+            coordinator.audio.ensure_camera(channel)
+        if not (coordinator.audio.get_state(channel) or {}).get("enabled"):
+            coordinator.audio.set_enabled(channel, True)
+        if call.data.get("classifier", False) and not (coordinator.audio.get_state(channel) or {}).get("classifier_enabled"):
+            coordinator.audio.set_classifier_enabled(channel, True)
+        await coordinator.async_ingest_audio_samples(channel, samples)
 
     hass.services.async_register(
         service_domain,
@@ -380,6 +437,18 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
             vol.Optional("clipping_threshold"): vol.Coerce(float),
             vol.Optional("voice_threshold"): vol.Coerce(float),
             vol.Optional("classifier_threshold"): vol.Coerce(float),
+            vol.Optional("entry_id"): cv.string,
+        }),
+    )
+
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_INGEST_SAMPLES,
+        audio_ingest_samples_service,
+        schema=vol.Schema({
+            vol.Required("channel"): cv.string,
+            vol.Required("samples"): [vol.Coerce(float)],
+            vol.Optional("classifier", default=False): cv.boolean,
             vol.Optional("entry_id"): cv.string,
         }),
     )

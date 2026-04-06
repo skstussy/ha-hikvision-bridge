@@ -45,6 +45,9 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
                 HikvisionCameraAudioVoiceDetectedBinary(
                     coordinator, dvr_serial, cam_id
                 ),
+                HikvisionCameraAudioGunshotDetectedBinary(
+                    coordinator, dvr_serial, cam_id
+                ),
                 HikvisionCameraAudioImpactDetectedBinary(
                     coordinator, dvr_serial, cam_id
                 ),
@@ -491,4 +494,10 @@ class HikvisionCameraAudioScreamDetectedBinary(HikvisionCameraAudioLabelBinary):
 class HikvisionCameraAudioShoutDetectedBinary(HikvisionCameraAudioLabelBinary):
     def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
         super().__init__(coordinator, dvr_serial, cam_id, "shout", "Audio Shout Detected")
+        self._attr_device_class = BinarySensorDeviceClass.SOUND
+
+
+class HikvisionCameraAudioGunshotDetectedBinary(HikvisionCameraAudioLabelBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id, "gunshot", "Audio Gunshot Detected")
         self._attr_device_class = BinarySensorDeviceClass.SOUND

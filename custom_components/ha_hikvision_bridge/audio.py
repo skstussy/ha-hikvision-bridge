@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from collections import deque
 import time
+from typing import Any
 
 
 class HikvisionAudioManager:
     def __init__(self, hass, coordinator) -> None:
         self.hass = hass
         self.coordinator = coordinator
-        self._state: dict[str, dict] = {}
+        self._state: dict[str, dict[str, Any]] = {}
         self._buffers: dict[str, deque] = {}
-        self._config: dict[str, dict] = {}
+        self._config: dict[str, dict[str, Any]] = {}
 
         self._defaults = {
             "enabled": False,
@@ -45,12 +46,20 @@ class HikvisionAudioManager:
             "last_event": None,
             "last_event_ts": 0.0,
             "last_classifier_ts": 0.0,
+            "last_classifier_source": None,
+            "last_gunshot_ts": 0.0,
+            "sample_count": 0,
+            "frames_ingested": 0,
         }
         self._config[cam] = dict(self._defaults)
         self._buffers[cam] = deque(maxlen=self._defaults["clip_frames"])
 
     def get_state(self, camera_id: str) -> dict | None:
         return self._state.get(str(camera_id))
+
+    def get_config(self, camera_id: str) -> dict[str, Any]:
+        self.ensure_camera(camera_id)
+        return dict(self._config[str(camera_id)])
 
     def set_enabled(self, camera_id: str, enabled: bool) -> None:
         self.ensure_camera(camera_id)
@@ -76,16 +85,16 @@ class HikvisionAudioManager:
         self.ensure_camera(camera_id)
         return list(self._buffers[str(camera_id)])
 
-    def ingest_samples(self, camera_id: str, samples: list[int | float]) -> None:
+    def ingest_samples(self, camera_id: str, samples: list[int | float]) -> dict[str, Any] | None:
         self.ensure_camera(camera_id)
         cam = str(camera_id)
         state = self._state[cam]
         conf = self._config[cam]
 
         if not state["enabled"] or not samples:
-            return
+            return None
 
-        values = [max(0.0, min(float(v), 255.0)) / 255.0 for v in samples]
+        values = [self._normalize_sample(value) for value in samples]
         level = sum(values) / len(values)
         peak = max(values)
         baseline = (state["baseline"] * 0.98) + (level * 0.02)
@@ -106,11 +115,48 @@ class HikvisionAudioManager:
                 "clipping": clipping,
                 "abnormal": abnormal,
                 "voice_detected": voice_detected,
+                "sample_count": state.get("sample_count", 0) + len(values),
+                "frames_ingested": state.get("frames_ingested", 0) + 1,
             }
         )
 
         self._buffers[cam].append(values)
         self._emit_detection_events(cam)
+        return state
+
+    def update_classifier_result(
+        self,
+        camera_id: str,
+        *,
+        label: str | None,
+        confidence: float,
+        accepted: bool,
+        source: str = "classifier",
+    ) -> None:
+        self.ensure_camera(camera_id)
+        state = self._state[str(camera_id)]
+        state["classifier_label"] = label
+        state["classifier_confidence"] = float(confidence or 0.0)
+        state["last_classifier_ts"] = time.time()
+        state["last_classifier_source"] = source
+        if accepted and label:
+            state["last_event"] = f"audio_classifier_{label}"
+            if label == "gunshot":
+                state["last_gunshot_ts"] = state["last_classifier_ts"]
+
+    def _normalize_sample(self, value: int | float) -> float:
+        try:
+            sample = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+        if -1.0 <= sample <= 1.0:
+            return abs(sample)
+
+        if -32768.0 <= sample <= 32767.0:
+            return min(abs(sample) / 32767.0, 1.0)
+
+        return min(max(abs(sample), 0.0), 255.0) / 255.0
 
     def _detect_voice(self, values: list[float], level: float, threshold: float) -> bool:
         if level < threshold or not values:
@@ -119,7 +165,9 @@ class HikvisionAudioManager:
         end = len(values) // 2
         mid_band = values[start:end] or values
         mid_energy = sum(mid_band) / len(mid_band)
-        return mid_energy > (level * 0.6)
+        peak = max(values)
+        spread = peak - min(values)
+        return mid_energy > (level * 0.6) and spread > max(threshold * 0.25, 0.01)
 
     def _emit_detection_events(self, camera_id: str) -> None:
         state = self._state[camera_id]
@@ -159,5 +207,6 @@ class HikvisionAudioManager:
                     "peak": state["peak"],
                     "anomaly_score": state["anomaly_score"],
                     "voice_detected": state["voice_detected"],
+                    "frames_ingested": state.get("frames_ingested", 0),
                 },
             )

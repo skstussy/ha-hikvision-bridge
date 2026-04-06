@@ -260,3 +260,27 @@ audio_set_threshold:
       name: Classifier threshold
       required: false
       example: 0.7
+
+audio_ingest_samples:
+  name: Ingest audio samples
+  description: Feed real numeric audio samples into the backend analytics pipeline for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    samples:
+      name: Samples
+      description: List of PCM-like numeric samples. Values in ranges -1..1, -32768..32767, or 0..255 are accepted.
+      required: true
+      example:
+        - 0.01
+        - 0.12
+        - 0.95
+        - 0.18
+    classifier:
+      name: Run classifier
+      description: Enable classifier processing for this ingest call if the camera classifier is currently disabled.
+      required: false
+      example: true

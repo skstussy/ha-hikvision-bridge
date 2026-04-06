@@ -26,6 +26,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         entities.append(HikvisionCameraAudioPeakSensor(coordinator, dvr_serial, cam_id))
         entities.append(HikvisionCameraAudioAnomalySensor(coordinator, dvr_serial, cam_id))
         entities.append(HikvisionCameraAudioClassifierLabelSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioClassifierConfidenceSensor(coordinator, dvr_serial, cam_id))
+        entities.append(HikvisionCameraAudioClassifierThresholdSensor(coordinator, dvr_serial, cam_id))
         entities.append(HikvisionCameraAudioLastEventSensor(coordinator, dvr_serial, cam_id))
     async_add_entities(entities)
 
@@ -303,3 +305,23 @@ class HikvisionCameraAudioClassifierLabelSensor(BaseCameraAudioSensor, SensorEnt
 class HikvisionCameraAudioLastEventSensor(BaseCameraAudioSensor, SensorEntity):
     def __init__(self, coordinator, dvr_serial, cam_id):
         super().__init__(coordinator, dvr_serial, cam_id, "Audio Last Event", "last_event")
+
+
+class HikvisionCameraAudioClassifierConfidenceSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Confidence", "classifier_confidence")
+
+    @property
+    def native_value(self):
+        state = self.coordinator.audio.get_state(self._cam_id) or {}
+        return round(float(state.get("classifier_confidence") or 0.0), 3)
+
+
+class HikvisionCameraAudioClassifierThresholdSensor(BaseCameraAudioSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Audio Classifier Threshold", "classifier_threshold")
+
+    @property
+    def native_value(self):
+        config = self.coordinator.audio.get_config(self._cam_id)
+        return round(float(config.get("classifier_threshold") or 0.0), 3)

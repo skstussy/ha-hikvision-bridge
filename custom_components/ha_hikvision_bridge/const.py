@@ -40,6 +40,7 @@ SERVICE_AUDIO_CAPTURE_CLIP = "audio_capture_clip"
 SERVICE_AUDIO_ENABLE_CLASSIFIER = "audio_enable_classifier"
 SERVICE_AUDIO_DISABLE_CLASSIFIER = "audio_disable_classifier"
 SERVICE_AUDIO_SET_THRESHOLD = "audio_set_threshold"
+SERVICE_AUDIO_INGEST_SAMPLES = "audio_ingest_samples"
 
 STREAM_MODE_WEBRTC = "webrtc"
 STREAM_MODE_RTSP = "rtsp"
