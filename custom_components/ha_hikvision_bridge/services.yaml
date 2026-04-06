@@ -284,3 +284,64 @@ audio_ingest_samples:
       description: Enable classifier processing for this ingest call if the camera classifier is currently disabled.
       required: false
       example: true
+
+
+audio_start_stream:
+  name: Start native audio stream
+  description: Start stream-native audio ingestion for a camera using ffmpeg against the camera RTSP path.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    profile:
+      name: Profile
+      description: Stream profile to tap. Use active, main, or sub.
+      required: false
+      example: active
+    ffmpeg_path:
+      name: FFmpeg path
+      description: ffmpeg binary path available to Home Assistant
+      required: false
+      example: ffmpeg
+    sample_rate:
+      name: Sample rate
+      description: PCM sample rate requested from ffmpeg
+      required: false
+      example: 8000
+    chunk_size:
+      name: Chunk size
+      description: PCM bytes read per ingest cycle
+      required: false
+      example: 3200
+    classifier:
+      name: Enable classifier
+      description: Enable the classifier when starting the stream
+      required: false
+      example: true
+
+audio_stop_stream:
+  name: Stop native audio stream
+  description: Stop stream-native audio ingestion for a camera.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+audio_apply_calibration:
+  name: Apply audio calibration preset
+  description: Apply a Sentinel calibration preset for the selected camera.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    preset:
+      name: Preset
+      description: Calibration preset. Use quiet, balanced, or noisy.
+      required: false
+      example: balanced

@@ -28,6 +28,9 @@ from .const import (
     SERVICE_AUDIO_DISABLE_CLASSIFIER,
     SERVICE_AUDIO_SET_THRESHOLD,
     SERVICE_AUDIO_INGEST_SAMPLES,
+    SERVICE_AUDIO_START_STREAM,
+    SERVICE_AUDIO_STOP_STREAM,
+    SERVICE_AUDIO_APPLY_CALIBRATION,
 )
 from .coordinator import HikvisionCoordinator
 from .helpers import get_dvr_serial, safe_find_text
@@ -99,6 +102,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_AUDIO_DISABLE_CLASSIFIER,
                 SERVICE_AUDIO_SET_THRESHOLD,
                 SERVICE_AUDIO_INGEST_SAMPLES,
+                SERVICE_AUDIO_START_STREAM,
+                SERVICE_AUDIO_STOP_STREAM,
+                SERVICE_AUDIO_APPLY_CALIBRATION,
             ):
                 if hass.services.has_service(service_domain, service):
                     hass.services.async_remove(service_domain, service)
@@ -288,6 +294,103 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
         if call.data.get("classifier", False) and not (coordinator.audio.get_state(channel) or {}).get("classifier_enabled"):
             coordinator.audio.set_classifier_enabled(channel, True)
         await coordinator.async_ingest_audio_samples(channel, samples)
+
+    async def audio_start_stream_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        await coordinator.async_start_native_audio_stream(
+            channel,
+            profile=call.data.get("profile", "active"),
+            ffmpeg_path=call.data.get("ffmpeg_path", "ffmpeg"),
+            sample_rate=call.data.get("sample_rate", 8000),
+            chunk_size=call.data.get("chunk_size", 3200),
+            enable_classifier=call.data.get("classifier", True),
+        )
+
+    async def audio_stop_stream_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        await coordinator.async_stop_native_audio_stream(str(call.data["channel"]))
+
+    async def audio_apply_calibration_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        preset = str(call.data.get("preset", "balanced")).lower()
+        presets = {
+            "quiet": {
+                "abnormal_multiplier": 1.9,
+                "silence_threshold": 0.012,
+                "voice_threshold": 0.025,
+                "classifier_threshold": 0.62,
+                "cooldown_seconds": 6.0,
+            },
+            "balanced": {
+                "abnormal_multiplier": 2.5,
+                "silence_threshold": 0.02,
+                "voice_threshold": 0.04,
+                "classifier_threshold": 0.7,
+                "cooldown_seconds": 8.0,
+            },
+            "noisy": {
+                "abnormal_multiplier": 3.1,
+                "silence_threshold": 0.04,
+                "voice_threshold": 0.06,
+                "classifier_threshold": 0.82,
+                "cooldown_seconds": 12.0,
+            },
+        }
+        coordinator.audio.set_thresholds(channel, **presets.get(preset, presets["balanced"]))
+        state = coordinator.audio.get_state(channel)
+        if state is not None:
+            state["calibration_profile"] = preset if preset in presets else "balanced"
+        coordinator._push_debug_event(
+            category="audio",
+            event="audio_calibration_applied",
+            message=f"Audio calibration preset applied for camera {channel}",
+            camera_id=channel,
+            context={"preset": preset if preset in presets else "balanced"},
+        )
+        coordinator.async_update_listeners()
+
+
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_START_STREAM,
+        audio_start_stream_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("profile", default="active"): cv.string,
+                vol.Optional("ffmpeg_path", default="ffmpeg"): cv.string,
+                vol.Optional("sample_rate", default=8000): vol.Coerce(int),
+                vol.Optional("chunk_size", default=3200): vol.Coerce(int),
+                vol.Optional("classifier", default=True): cv.boolean,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_STOP_STREAM,
+        audio_stop_stream_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_AUDIO_APPLY_CALIBRATION,
+        audio_apply_calibration_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("preset", default="balanced"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
 
     hass.services.async_register(
         service_domain,

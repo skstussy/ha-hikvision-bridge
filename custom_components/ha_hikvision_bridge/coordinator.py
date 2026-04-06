@@ -28,6 +28,7 @@ from .const import (
     CONF_VERIFY_SSL,
     DEFAULT_RTSP_PORT,
     DEFAULT_STREAM_PROFILE,
+    DOMAIN,
 )
 from .digest import DigestAuth
 from .helpers import build_rtsp_direct_url, build_rtsp_url, build_stream_profile_map, choose_stream_by_profile, coerce_bool, inject_rtsp_credentials, normalize_stream_profile, parse_storage_capabilities_xml, parse_storage_xml, safe_find_text
@@ -192,6 +193,80 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         await self._maybe_run_audio_classifier(str(camera_id))
         self.async_update_listeners()
 
+
+    def _resolve_audio_stream(self, camera_id: str, profile: str = "active") -> dict:
+        cam_key = str(camera_id)
+        normalized = str(profile or "active").lower()
+        if normalized == "active":
+            stream = dict(self.get_active_stream(cam_key) or {})
+            if stream:
+                stream["requested_profile"] = "active"
+                return stream
+        streams = self.data.get("stream_profiles_by_camera", {}).get(cam_key, {})
+        stream = dict(streams.get(normalized, {}) or {})
+        if stream:
+            stream["requested_profile"] = normalized
+            return stream
+        fallback = dict(self.get_active_stream(cam_key) or {})
+        if fallback:
+            fallback["requested_profile"] = normalized
+        return fallback
+
+    async def async_start_native_audio_stream(
+        self,
+        camera_id: str,
+        *,
+        profile: str = "active",
+        ffmpeg_path: str = "ffmpeg",
+        sample_rate: int = 8000,
+        chunk_size: int = 3200,
+        enable_classifier: bool = True,
+    ) -> None:
+        cam_key = str(camera_id)
+        self.audio.ensure_camera(cam_key)
+        self.audio.set_enabled(cam_key, True)
+        if enable_classifier:
+            self.audio.set_classifier_enabled(cam_key, True)
+
+        stream = self._resolve_audio_stream(cam_key, profile=profile)
+        stream_url = stream.get("rtsp_direct_url") or stream.get("rtsp_url")
+        if not stream_url:
+            raise UpdateFailed(f"No RTSP stream available for camera {cam_key}")
+
+        await self.audio.async_start_native_stream(
+            cam_key,
+            stream_url=stream_url,
+            ffmpeg_path=ffmpeg_path,
+            sample_rate=sample_rate,
+            chunk_size=chunk_size,
+            source="rtsp_direct" if stream.get("rtsp_direct_url") else "rtsp",
+            profile=stream.get("requested_profile") or stream.get("stream_profile") or profile,
+            audio_codec=stream.get("audio_codec"),
+        )
+        self._push_debug_event(
+            category="audio",
+            event="audio_native_stream_requested",
+            message=f"Native audio stream requested for camera {cam_key}",
+            camera_id=cam_key,
+            context={
+                "profile": stream.get("requested_profile") or stream.get("stream_profile") or profile,
+                "audio_codec": stream.get("audio_codec"),
+                "stream_id": stream.get("id"),
+            },
+        )
+        self.async_update_listeners()
+
+    async def async_stop_native_audio_stream(self, camera_id: str) -> None:
+        cam_key = str(camera_id)
+        await self.audio.async_stop_native_stream(cam_key)
+        self._push_debug_event(
+            category="audio",
+            event="audio_native_stream_stop_requested",
+            message=f"Native audio stream stop requested for camera {cam_key}",
+            camera_id=cam_key,
+        )
+        self.async_update_listeners()
+
     async def _maybe_run_audio_classifier(self, camera_id: str) -> None:
         state = self.audio.get_state(camera_id)
         if not state:
@@ -217,6 +292,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             confidence=confidence,
             accepted=accepted,
             source="signal_heuristic",
+            metrics=result.get("metrics", {}),
         )
 
         self._push_debug_event(
@@ -644,6 +720,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             self._alarm_stream_task = self.hass.async_create_task(self._alarm_stream_loop())
 
     async def async_stop_alarm_stream(self) -> None:
+        await self.audio.async_stop_all_native_streams()
         task = self._alarm_stream_task
         if task is not None:
             task.cancel()
