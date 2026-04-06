@@ -111,20 +111,8 @@ class HikvisionCameraInfoSensor(BaseCameraEntity, SensorEntity):
             "channel": cam.get("id"),
             "ip_address": cam.get("ip_address"),
             "manage_port": cam.get("manage_port"),
-            "src_input_port": cam.get("src_input_port"),
-            "username": cam.get("username"),
-            "proxy_protocol": cam.get("proxy_protocol"),
-            "addressing_format": cam.get("addressing_format"),
-            "connection_mode": cam.get("connection_mode"),
-            "stream_type": cam.get("stream_type"),
-            "model": cam.get("model"),
-            "serial_number": cam.get("serial_number"),
-            "firmware_version": cam.get("firmware_version"),
-            "device_id": cam.get("device_id"),
-            "dev_index": cam.get("dev_index"),
-            "certificate_validation_enabled": cam.get("certificate_validation_enabled"),
-            "default_admin_port_enabled": cam.get("default_admin_port_enabled"),
-            "timing_enabled": cam.get("timing_enabled"),
+            "online": cam.get("online"),
+            "card_visible": cam.get("card_visible"),
             "ptz_supported": cam.get("ptz_supported"),
             "ptz_proxy_supported": cam.get("ptz_proxy_supported"),
             "ptz_direct_supported": cam.get("ptz_direct_supported"),
@@ -139,16 +127,6 @@ class HikvisionCameraInfoSensor(BaseCameraEntity, SensorEntity):
             "ptz_direct_momentary_supported": cam.get("ptz_direct_momentary_supported"),
             "ptz_direct_continuous_supported": cam.get("ptz_direct_continuous_supported"),
             "ptz_unsupported_reason": cam.get("ptz_unsupported_reason"),
-            "ptz_enabled": cam.get("ptz_enabled"),
-            "ptz_online": cam.get("ptz_online"),
-            "online": cam.get("online"),
-            "card_visible": cam.get("card_visible"),
-            "rtsp_url": cam.get("rtsp_url"),
-            "rtsp_direct_url": cam.get("rtsp_direct_url"),
-            "stream_id": cam.get("stream_id"),
-            "stream_profile": cam.get("stream_profile"),
-            "main_stream_id": cam.get("main_stream_id"),
-            "sub_stream_id": cam.get("sub_stream_id"),
         }
 
 
@@ -158,47 +136,22 @@ class HikvisionCameraStreamSensor(BaseCameraEntity, SensorEntity):
         self._attr_has_entity_name = True
         self._attr_name = "Stream"
         self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_stream"
+        self._attr_icon = "mdi:cctv"
 
     @property
     def native_value(self):
         stream = self._stream()
-        codec = stream.get("video_codec") or "Unknown"
-        width = stream.get("width")
-        height = stream.get("height")
-        profile = self.coordinator.get_selected_stream_profile(self._cam_id)
-        label = "Main-stream" if profile == "main" else "Sub-stream"
-        if width and height:
-            return f"{label} · {codec} {width}x{height}"
-        return f"{label} · {codec}"
+        return stream.get("stream_profile") or "unknown"
 
     @property
     def extra_state_attributes(self):
         stream = self._stream()
-        profiles = self._stream_profiles()
-        profile = self.coordinator.get_selected_stream_profile(self._cam_id)
         return {
-            "channel": self._cam_id,
-            "stream_profile": profile,
-            "stream_profile_label": "Main-stream" if profile == "main" else "Sub-stream",
-            "available_stream_profiles": sorted(list(profiles.keys())),
-            "main_stream_id": (profiles.get("main") or {}).get("stream_id"),
-            "sub_stream_id": (profiles.get("sub") or {}).get("stream_id"),
-            "stream_id": stream.get("stream_id"),
-            "stream_name": stream.get("stream_name"),
-            "enabled": stream.get("enabled"),
+            "stream_id": stream.get("id"),
+            "stream_name": stream.get("name"),
+            "stream_profile": stream.get("stream_profile"),
             "transport": stream.get("transport"),
-            "video_enabled": stream.get("video_enabled"),
             "video_input_channel_id": stream.get("video_input_channel_id"),
-            "video_codec": stream.get("video_codec"),
-            "width": stream.get("width"),
-            "height": stream.get("height"),
-            "bitrate_mode": stream.get("bitrate_mode"),
-            "constant_bitrate": stream.get("constant_bitrate"),
-            "fixed_quality": stream.get("fixed_quality"),
-            "max_frame_rate_raw": stream.get("max_frame_rate_raw"),
-            "max_frame_rate": stream.get("max_frame_rate"),
-            "gov_length": stream.get("gov_length"),
-            "snapshot_image_type": stream.get("snapshot_image_type"),
             "audio_enabled": stream.get("audio_enabled"),
             "audio_input_channel_id": stream.get("audio_input_channel_id"),
             "audio_codec": stream.get("audio_codec"),
@@ -229,24 +182,6 @@ class HikvisionNVRSystemInfoSensor(BaseNVREntity, SensorEntity):
             "manufacturer": nvr.get("manufacturer", "Hikvision"),
             "serial_number": nvr.get("serial_number"),
             "firmware_version": nvr.get("firmware_version"),
-            "firmware_released_date": nvr.get("firmware_released_date"),
-            "mac_address": nvr.get("mac_address"),
-            "device_id": nvr.get("device_id"),
-            "device_description": nvr.get("device_description"),
-            "boot_time": nvr.get("boot_time"),
-            "online": nvr.get("online", True),
-            "disk_mode": storage.get("disk_mode"),
-            "work_mode": storage.get("work_mode"),
-            "disk_count": storage.get("disk_count", 0),
-            "healthy_disks": storage.get("healthy_disks", 0),
-            "failed_disks": storage.get("failed_disks", 0),
-            "active_alarm_count": self.coordinator.data.get("alarm_states", {}).get("active_alarm_count", 0),
-            "alarm_stream_connected": self.coordinator.data.get("alarm_states", {}).get("stream_connected", False),
-            "last_event_type": self.coordinator.data.get("alarm_states", {}).get("last_event_type"),
-            "last_event_channel": self.coordinator.data.get("alarm_states", {}).get("last_event_channel"),
-            "last_event_state": self.coordinator.data.get("alarm_states", {}).get("last_event_state"),
-            "active_alarm_inputs": [key.replace("alarm_input_", "") for key, value in self.coordinator.data.get("alarm_states", {}).items() if key.startswith("alarm_input_") and value],
-            "supports_isapi": nvr.get("supports_isapi", True),
             "storage_info_supported": storage.get("storage_info_supported", False),
             "storage_hdd_caps_supported": storage.get("storage_hdd_caps_supported", False),
             "storage_extra_caps_supported": storage.get("storage_extra_caps_supported", False),
