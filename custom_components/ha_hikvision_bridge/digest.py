@@ -36,35 +36,6 @@ class DigestAuth:
     def ready(self) -> bool:
         return bool(self.realm and self.nonce)
 
-    async def async_get_authorization(
-        self,
-        session,
-        method: str,
-        uri: str,
-        *,
-        body: str | bytes | None = None,
-        verify_ssl: bool = False,
-    ) -> str:
-        """Fetch a digest challenge if needed and build the Authorization header."""
-        if not self.ready():
-            async with session.request(
-                "GET",
-                uri,
-                ssl=verify_ssl,
-                allow_redirects=False,
-            ) as resp:
-                header = resp.headers.get("WWW-Authenticate", "")
-                if resp.status != 401 and not header:
-                    raise ValueError(
-                        f"Digest challenge not returned for GET {uri} "
-                        f"(status={resp.status})"
-                    )
-                if not header:
-                    raise ValueError(f"Missing WWW-Authenticate header for {uri}")
-                self.parse(header)
-
-        return self.build(method, uri)
-
     def build(self, method: str, uri: str) -> str:
         if not self.ready():
             raise ValueError("Digest challenge not initialized")

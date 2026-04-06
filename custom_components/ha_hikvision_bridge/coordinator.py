@@ -248,6 +248,40 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         scheme = "https" if self.use_https else "http"
         return f"{scheme}://{self.host}:{self.port}{path}"
 
+
+
+    def get_camera(self, cam_id: str) -> dict:
+        """Return the current camera payload for a channel."""
+        cam_id = str(cam_id)
+        return next(
+            (cam for cam in self.data.get("cameras", []) if str(cam.get("id")) == cam_id),
+            {},
+        )
+
+    def get_stream_profiles(self, cam_id: str) -> dict:
+        """Return the stream profile map for a camera."""
+        camera = self.get_camera(cam_id)
+        profile_map = camera.get("stream_profile_map") or {}
+        return dict(profile_map)
+
+    def get_active_stream(self, cam_id: str) -> dict:
+        """Return the resolved active stream metadata for a camera."""
+        camera = self.get_camera(cam_id)
+        if not camera:
+            return {}
+        return {
+            "profile": camera.get("stream_profile"),
+            "requested_profile": camera.get("stream_profile_requested"),
+            "resolved_profile": camera.get("stream_profile_resolved"),
+            "options": list(camera.get("stream_profile_options") or []),
+            "selection_source": camera.get("stream_profile_selection_source"),
+            "id": camera.get("stream_id"),
+            "track_id": camera.get("track_id"),
+            "rtsp_url": camera.get("rtsp_url"),
+            "rtsp_direct_url": camera.get("rtsp_direct_url"),
+            "rtsp_profile": camera.get("rtsp_profile"),
+        }
+
     def get_playback_debug(self, cam_id: str) -> list[dict]:
         return list(self._playback_debug_by_camera.get(str(cam_id), []))
 
