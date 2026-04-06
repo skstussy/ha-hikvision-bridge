@@ -83,6 +83,24 @@ class BaseCameraAudioBinary(BaseCameraBinary):
     @property
     def is_on(self):
         return bool(self._audio_state().get(self._audio_key, False))
+
+class HikvisionCameraAudioLabelBinary(BaseCameraBinary):
+    def __init__(self, coordinator, dvr_serial, cam_id, label, name):
+        super().__init__(coordinator, dvr_serial, cam_id)
+        self._label = label
+        self._attr_name = name
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{label}_detected"
+
+    def _audio_state(self):
+        return self.coordinator.audio.get_state(self._cam_id) or {}
+
+    @property
+    def is_on(self):
+        state = self._audio_state()
+        label = state.get("classifier_label")
+        confidence = float(state.get("classifier_confidence") or 0.0)
+        threshold = self.coordinator.audio._config[self._cam_id]["classifier_threshold"]
+        return label == self._label and confidence >= threshold
         
 class HikvisionCameraOnlineBinary(BaseCameraBinary):
     def __init__(self, coordinator, dvr_serial, cam_id):
