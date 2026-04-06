@@ -172,6 +172,56 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
             call.data.get("step_delay", 150),
         )
 
+    async def audio_enable_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        coordinator.audio.set_enabled(str(call.data["channel"]), True)
+
+    async def audio_disable_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        coordinator.audio.set_enabled(str(call.data["channel"]), False)
+
+    async def audio_recalibrate_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        coordinator.audio.recalibrate(str(call.data["channel"]))
+
+    async def audio_enable_classifier_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        coordinator.audio.set_classifier_enabled(str(call.data["channel"]), True)
+
+    async def audio_disable_classifier_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        coordinator.audio.set_classifier_enabled(str(call.data["channel"]), False)
+
+    async def audio_capture_clip_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        clip = coordinator.audio.get_clip(channel)
+        push = getattr(coordinator, "_push_debug_event", None)
+        if callable(push):
+            push(
+                {
+                    "source": "audio",
+                    "camera": channel,
+                    "category": "audio",
+                    "level": "info",
+                    "event": "audio_clip_captured",
+                    "details": {
+                        "frames": len(clip),
+                    },
+                }
+            )
+
+    async def audio_set_threshold_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        coordinator.audio.set_thresholds(
+            str(call.data["channel"]),
+            abnormal_multiplier=call.data.get("abnormal_multiplier"),
+            silence_threshold=call.data.get("silence_threshold"),
+            clipping_threshold=call.data.get("clipping_threshold"),
+            voice_threshold=call.data.get("voice_threshold"),
+            classifier_threshold=call.data.get("classifier_threshold"),
+        )
+
     hass.services.async_register(
         service_domain,
         SERVICE_PTZ,
