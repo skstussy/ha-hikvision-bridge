@@ -12,6 +12,15 @@ DEFAULT_PORT_HTTPS = 443
 DEFAULT_RTSP_PORT = 554
 DEFAULT_VERIFY_SSL = False
 DEFAULT_USE_HTTPS = True
+DEFAULT_DEBUG_CATEGORIES = (
+    "playback",
+    "isapi",
+    "websocket",
+    "stream",
+    "alarm",
+    "ptz",
+    "audio",
+)
 
 PLATFORMS = ["sensor", "binary_sensor", "camera"]
 SERVICE_PTZ = "ptz"
