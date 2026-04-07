@@ -650,7 +650,13 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             stream = self.get_active_stream(cam_id)
         else:
             profiles = self.get_stream_profiles(cam_id)
-            stream = dict(profiles.get(normalize_stream_profile(selected_profile)) or {})
+            selected = profiles.get(normalize_stream_profile(selected_profile))
+            if isinstance(selected, dict):
+                stream = dict(selected)
+            else:
+                stream = {}
+                if selected not in (None, ""):
+                    stream["id"] = str(selected)
             if stream:
                 stream.setdefault("rtsp_url", build_rtsp_url(
                     self.username,

@@ -229,7 +229,7 @@ async def async_handle_run_isapi_probe(hass: HomeAssistant, connection, msg: dic
                 category="isapi",
                 event="probe_failed",
                 message="ISAPI endpoint probe failed",
-                error=str(err),
+                context={"error": str(err)},
             )
         connection.send_error(msg["id"], "probe_failed", str(err))
         return

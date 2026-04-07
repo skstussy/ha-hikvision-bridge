@@ -465,12 +465,14 @@ class HikvisionAudioManager:
     ) -> None:
         push = getattr(self.coordinator, "_push_debug_event", None)
         if callable(push):
+            payload = dict(context or {})
+            if error is not None and "error" not in payload:
+                payload["error"] = str(error)
             push(
                 level=level,
                 category="audio",
                 event=event,
                 message=message,
                 camera_id=str(camera_id),
-                context=context or {},
-                error=error,
+                context=payload,
             )
