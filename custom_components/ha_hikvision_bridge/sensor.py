@@ -193,7 +193,7 @@ class HikvisionCameraStreamSensor(BaseCameraEntity, SensorEntity):
     @property
     def native_value(self):
         stream = self._stream()
-        return stream.get("stream_profile") or stream.get("profile") or "unknown"
+        return stream.get("resolved_profile") or stream.get("profile") or stream.get("requested_profile") or "unknown"
 
     @property
     def extra_state_attributes(self):
@@ -202,12 +202,10 @@ class HikvisionCameraStreamSensor(BaseCameraEntity, SensorEntity):
         return {
             "channel": self._cam_id,
             "stream_id": stream.get("id"),
-            "stream_name": stream.get("name") or stream.get("stream_name"),
-            "stream_profile": stream.get("stream_profile") or stream.get("profile"),
+            "stream_name": stream.get("stream_name") or stream.get("name"),
+            "stream_profile": stream.get("resolved_profile") or stream.get("profile") or stream.get("requested_profile"),
             "transport": stream.get("transport"),
             "video_input_channel_id": stream.get("video_input_channel_id"),
-            "audio_enabled": stream.get("audio_enabled"),
-            "audio_input_channel_id": stream.get("audio_input_channel_id"),
             "audio_codec": stream.get("audio_codec"),
             "rtsp_url": stream.get("rtsp_url"),
             "rtsp_direct_url": stream.get("rtsp_direct_url"),

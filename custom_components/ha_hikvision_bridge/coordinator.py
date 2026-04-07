@@ -170,6 +170,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         self.rtsp_port = DEFAULT_RTSP_PORT
         self._alarm_stream_task: asyncio.Task | None = None
         self._ptz_state: dict[str, dict] = {}
+        self._ptz_capability_cache: dict[str, dict] = {}
         self._playback_debug_by_camera: dict[str, list[dict]] = {}
         self._stream_profile_by_camera: dict[str, str] = {str(k): normalize_stream_profile(v) for k, v in entry.options.get("stream_profile_by_camera", {}).items()}
         self._debug_enabled = bool(entry.options.get(CONF_DEBUG_ENABLED, False))
@@ -307,14 +308,12 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         stream_id = camera.get("stream_id")
         return {
             "profile": camera.get("stream_profile"),
-            "stream_profile": camera.get("stream_profile"),
             "requested_profile": camera.get("stream_profile_requested"),
             "resolved_profile": camera.get("stream_profile_resolved"),
             "options": list(camera.get("stream_profile_options") or []),
             "selection_source": camera.get("stream_profile_selection_source"),
             "id": stream_id,
             "stream_id": stream_id,
-            "name": camera.get("name"),
             "stream_name": camera.get("name"),
             "track_id": camera.get("track_id"),
             "rtsp_url": camera.get("rtsp_url"),
@@ -366,55 +365,218 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 )
             return await resp.read()
 
+    async def _send_put_xml(
+        self,
+        path: str,
+        xml_body: str,
+        *,
+        expected: tuple[int, ...] = (200, 201, 204),
+    ) -> str:
+        return await self._request_text(
+            "PUT",
+            path,
+            body=xml_body,
+            expected=expected,
+            headers={"Content-Type": "application/xml; charset=UTF-8"},
+            allow_empty=True,
+        )
+
+    async def _probe_ptz_capabilities(self, cam_id: str) -> dict:
+        cam_key = str(cam_id)
+        cached = self._ptz_capability_cache.get(cam_key)
+        if cached:
+            return dict(cached)
+
+        result = {
+            "ptz_supported": False,
+            "ptz_proxy_supported": False,
+            "ptz_direct_supported": False,
+            "ptz_control_method": "none",
+            "ptz_capability_mode": "unknown",
+            "ptz_implementation": "none",
+            "ptz_proxy_ctrl_mode": None,
+            "ptz_momentary_supported": False,
+            "ptz_continuous_supported": False,
+            "ptz_proxy_momentary_supported": False,
+            "ptz_proxy_continuous_supported": False,
+            "ptz_direct_momentary_supported": False,
+            "ptz_direct_continuous_supported": False,
+            "ptz_unsupported_reason": None,
+            "focus_supported": False,
+            "iris_supported": False,
+            "zoom_supported": False,
+        }
+
+        camera = self.get_camera(cam_key)
+        if not camera or not camera.get("online", True):
+            result["ptz_unsupported_reason"] = "camera_offline"
+            self._ptz_capability_cache[cam_key] = dict(result)
+            return dict(result)
+
+        async def probe_xml(path: str) -> ET.Element | None:
+            try:
+                return await self._request_xml("GET", path)
+            except Exception:
+                return None
+
+        direct_info = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}")
+        direct_caps = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/capabilities")
+        if direct_info is not None or direct_caps is not None:
+            result["ptz_direct_supported"] = True
+            result["ptz_momentary_supported"] = True
+            result["ptz_continuous_supported"] = True
+            result["ptz_direct_momentary_supported"] = True
+            result["ptz_direct_continuous_supported"] = True
+            result["ptz_control_method"] = "direct"
+            result["ptz_capability_mode"] = "isapi"
+            result["ptz_implementation"] = "ptzctrl"
+
+        focus_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/focus")
+        iris_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/iris")
+        result["focus_supported"] = focus_caps is not None
+        result["iris_supported"] = iris_caps is not None
+        result["zoom_supported"] = result["ptz_direct_supported"] or result["ptz_proxy_supported"]
+
+        if result["ptz_direct_supported"] or result["ptz_proxy_supported"]:
+            result["ptz_supported"] = True
+            result["ptz_unsupported_reason"] = None
+        else:
+            result["ptz_unsupported_reason"] = "ptz_endpoint_unavailable"
+
+        self._ptz_capability_cache[cam_key] = dict(result)
+        return dict(result)
+
+    async def _ensure_ptz_supported(self, cam_id: str) -> dict:
+        camera = self.get_camera(cam_id)
+        if not camera:
+            raise UpdateFailed(f"Unknown camera {cam_id}")
+        capabilities = await self._probe_ptz_capabilities(cam_id)
+        if not capabilities.get("ptz_supported"):
+            raise UpdateFailed(
+                capabilities.get("ptz_unsupported_reason") or f"PTZ is not supported for camera {cam_id}"
+            )
+        return capabilities
+
+    async def _sleep_and_stop_ptz(self, cam_id: str, duration: int) -> None:
+        if duration <= 0:
+            return
+        await asyncio.sleep(max(0.05, duration / 1000.0))
+        stop_xml = '<?xml version="1.0" encoding="UTF-8"?><PTZData><pan>0</pan><tilt>0</tilt><zoom>0</zoom></PTZData>'
+        try:
+            await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_id}/continuous", stop_xml)
+        except Exception:
+            pass
+
     async def ptz(self, cam_id: str, pan: int = 0, tilt: int = 0, duration: int = 500) -> None:
+        cam_key = str(cam_id)
+        await self._ensure_ptz_supported(cam_key)
+        pan = max(-100, min(100, int(pan or 0)))
+        tilt = max(-100, min(100, int(tilt or 0)))
+        duration = max(0, int(duration or 0))
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<PTZData>'
+            f'<pan>{pan}</pan>'
+            f'<tilt>{tilt}</tilt>'
+            '<zoom>0</zoom>'
+            f'<Momentary><duration>{duration}</duration></Momentary>'
+            '</PTZData>'
+        )
+        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
         self._push_debug_event(
             category="ptz",
-            event="ptz_service_unimplemented",
-            message="PTZ service is not implemented in this build",
-            camera_id=str(cam_id),
+            event="ptz_move_sent",
+            message=f"PTZ move sent for camera {cam_key}",
+            camera_id=cam_key,
             context={"pan": pan, "tilt": tilt, "duration": duration},
         )
-        raise UpdateFailed("PTZ service is not implemented in this build")
 
     async def goto_preset(self, cam_id: str, preset: int) -> None:
+        cam_key = str(cam_id)
+        await self._ensure_ptz_supported(cam_key)
+        preset_id = max(1, int(preset))
+        await self._request_text(
+            "PUT",
+            f"/ISAPI/PTZCtrl/channels/{cam_key}/presets/{preset_id}/goto",
+            expected=(200, 201, 204),
+            allow_empty=True,
+        )
         self._push_debug_event(
             category="ptz",
-            event="ptz_preset_unimplemented",
-            message="PTZ preset service is not implemented in this build",
-            camera_id=str(cam_id),
-            context={"preset": preset},
+            event="ptz_goto_preset_sent",
+            message=f"PTZ preset sent for camera {cam_key}",
+            camera_id=cam_key,
+            context={"preset": preset_id},
         )
-        raise UpdateFailed("PTZ preset service is not implemented in this build")
 
     async def focus(self, cam_id: str, direction: int = 1, speed: int = 60, duration: int = 500) -> None:
+        cam_key = str(cam_id)
+        speed = max(0, min(100, int(speed or 0)))
+        direction_raw = int(direction or 0)
+        direction = 0 if direction_raw == 0 else (1 if direction_raw > 0 else -1)
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<FocusData><focus>{direction * speed}</focus></FocusData>'
+        )
+        await self._send_put_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/focus", body)
+        if duration > 0:
+            await asyncio.sleep(max(0.05, int(duration) / 1000.0))
+            stop_body = '<?xml version="1.0" encoding="UTF-8"?><FocusData><focus>0</focus></FocusData>'
+            await self._send_put_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/focus", stop_body)
         self._push_debug_event(
             category="ptz",
-            event="ptz_focus_unimplemented",
-            message="PTZ focus service is not implemented in this build",
-            camera_id=str(cam_id),
+            event="ptz_focus_sent",
+            message=f"Focus command sent for camera {cam_key}",
+            camera_id=cam_key,
             context={"direction": direction, "speed": speed, "duration": duration},
         )
-        raise UpdateFailed("PTZ focus service is not implemented in this build")
 
     async def iris(self, cam_id: str, direction: int = 1, speed: int = 60, duration: int = 500) -> None:
+        cam_key = str(cam_id)
+        speed = max(0, min(100, int(speed or 0)))
+        direction_raw = int(direction or 0)
+        direction = 0 if direction_raw == 0 else (1 if direction_raw > 0 else -1)
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<IrisData><iris>{direction * speed}</iris></IrisData>'
+        )
+        await self._send_put_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/iris", body)
+        if duration > 0:
+            await asyncio.sleep(max(0.05, int(duration) / 1000.0))
+            stop_body = '<?xml version="1.0" encoding="UTF-8"?><IrisData><iris>0</iris></IrisData>'
+            await self._send_put_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/iris", stop_body)
         self._push_debug_event(
             category="ptz",
-            event="ptz_iris_unimplemented",
-            message="PTZ iris service is not implemented in this build",
-            camera_id=str(cam_id),
+            event="ptz_iris_sent",
+            message=f"Iris command sent for camera {cam_key}",
+            camera_id=cam_key,
             context={"direction": direction, "speed": speed, "duration": duration},
         )
-        raise UpdateFailed("PTZ iris service is not implemented in this build")
 
     async def zoom(self, cam_id: str, direction: int = 1, speed: int = 50, duration: int = 500) -> None:
+        cam_key = str(cam_id)
+        await self._ensure_ptz_supported(cam_key)
+        speed = max(0, min(100, int(speed or 0)))
+        direction_raw = int(direction or 0)
+        direction = 0 if direction_raw == 0 else (1 if direction_raw > 0 else -1)
+        duration = max(0, int(duration or 0))
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<PTZData>'
+            '<pan>0</pan>'
+            '<tilt>0</tilt>'
+            f'<zoom>{direction * speed}</zoom>'
+            f'<Momentary><duration>{duration}</duration></Momentary>'
+            '</PTZData>'
+        )
+        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
         self._push_debug_event(
             category="ptz",
-            event="ptz_zoom_unimplemented",
-            message="PTZ zoom service is not implemented in this build",
-            camera_id=str(cam_id),
+            event="ptz_zoom_sent",
+            message=f"Zoom command sent for camera {cam_key}",
+            camera_id=cam_key,
             context={"direction": direction, "speed": speed, "duration": duration},
         )
-        raise UpdateFailed("PTZ zoom service is not implemented in this build")
 
     async def return_to_center(
         self,
@@ -424,19 +586,41 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         duration: int = 350,
         step_delay: int = 150,
     ) -> None:
+        cam_key = str(cam_id)
+        await self._ensure_ptz_supported(cam_key)
+        current = dict(state or {})
+        pan_steps = int(current.get("pan") or 0)
+        tilt_steps = int(current.get("tilt") or 0)
+        zoom_steps = int(current.get("zoom") or 0)
+        delay = max(0.05, int(step_delay or 150) / 1000.0)
+
+        async def move_once(pan_value: int = 0, tilt_value: int = 0, zoom_value: int = 0) -> None:
+            if pan_value or tilt_value:
+                await self.ptz(cam_key, pan=pan_value, tilt=tilt_value, duration=duration)
+            elif zoom_value:
+                await self.zoom(cam_key, direction=1 if zoom_value > 0 else -1, speed=speed, duration=duration)
+
+        while pan_steps or tilt_steps or zoom_steps:
+            if pan_steps:
+                await move_once(pan_value=-speed if pan_steps > 0 else speed)
+                pan_steps += -1 if pan_steps > 0 else 1
+                await asyncio.sleep(delay)
+            if tilt_steps:
+                await move_once(tilt_value=-speed if tilt_steps > 0 else speed)
+                tilt_steps += -1 if tilt_steps > 0 else 1
+                await asyncio.sleep(delay)
+            if zoom_steps:
+                await move_once(zoom_value=-1 if zoom_steps > 0 else 1)
+                zoom_steps += -1 if zoom_steps > 0 else 1
+                await asyncio.sleep(delay)
+
         self._push_debug_event(
             category="ptz",
-            event="ptz_return_home_unimplemented",
-            message="PTZ return-to-center service is not implemented in this build",
-            camera_id=str(cam_id),
-            context={
-                "state": state or {},
-                "speed": speed,
-                "duration": duration,
-                "step_delay": step_delay,
-            },
+            event="ptz_return_home_sent",
+            message=f"Return-to-home correction sent for camera {cam_key}",
+            camera_id=cam_key,
+            context={"state": state or {}, "speed": speed, "duration": duration, "step_delay": step_delay},
         )
-        raise UpdateFailed("PTZ return-to-center service is not implemented in this build")
 
     async def search_playback_uri(
         self,
@@ -755,6 +939,50 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 }
             )
 
+        for cam_id, camera_meta in list(cameras_by_id.items()):
+            if camera_meta.get("stream_id"):
+                continue
+
+            profile_name = self._stream_profile_by_camera.get(str(cam_id), DEFAULT_STREAM_PROFILE)
+            camera_meta.update(
+                {
+                    "card_visible": False,
+                    "stream_profile": profile_name,
+                    "stream_profile_requested": profile_name,
+                    "stream_profile_resolved": None,
+                    "stream_profile_options": [],
+                    "stream_profile_map": {},
+                    "stream_profile_selection_source": "unavailable",
+                    "stream_id": None,
+                    "track_id": None,
+                    "rtsp_url": None,
+                    "rtsp_direct_url": None,
+                    "rtsp_profile": None,
+                    "transport": None,
+                    "video_codec": None,
+                    "width": None,
+                    "height": None,
+                    "bitrate_mode": None,
+                    "constant_bitrate": None,
+                    "max_frame_rate": None,
+                    "audio_codec": None,
+                    "ptz_supported": False,
+                    "ptz_proxy_supported": False,
+                    "ptz_direct_supported": False,
+                    "ptz_control_method": "none",
+                    "ptz_capability_mode": "unknown",
+                    "ptz_implementation": "none",
+                    "ptz_proxy_ctrl_mode": None,
+                    "ptz_momentary_supported": False,
+                    "ptz_continuous_supported": False,
+                    "ptz_proxy_momentary_supported": False,
+                    "ptz_proxy_continuous_supported": False,
+                    "ptz_direct_momentary_supported": False,
+                    "ptz_direct_continuous_supported": False,
+                    "ptz_unsupported_reason": "no_stream_metadata",
+                }
+            )
+
         ordered_camera_ids = sorted(
             cameras_by_id,
             key=lambda value: (
@@ -762,13 +990,35 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             ),
         )
 
-        all_cameras = [cameras_by_id[cam_id] for cam_id in ordered_camera_ids]
-        data["all_cameras"] = list(all_cameras)
-        data["cameras"] = [
-            camera
-            for camera in all_cameras
-            if camera.get("stream_id")
-        ]
+        for cam_id in ordered_camera_ids:
+            camera_meta = cameras_by_id[cam_id]
+            if camera_meta.get("stream_id") and camera_meta.get("card_visible", True):
+                try:
+                    camera_meta.update(await self._probe_ptz_capabilities(str(cam_id)))
+                except Exception as err:
+                    camera_meta.update(
+                        {
+                            "ptz_supported": False,
+                            "ptz_proxy_supported": False,
+                            "ptz_direct_supported": False,
+                            "ptz_control_method": "none",
+                            "ptz_capability_mode": "error",
+                            "ptz_implementation": "none",
+                            "ptz_proxy_ctrl_mode": None,
+                            "ptz_momentary_supported": False,
+                            "ptz_continuous_supported": False,
+                            "ptz_proxy_momentary_supported": False,
+                            "ptz_proxy_continuous_supported": False,
+                            "ptz_direct_momentary_supported": False,
+                            "ptz_direct_continuous_supported": False,
+                            "ptz_unsupported_reason": str(err),
+                            "focus_supported": False,
+                            "iris_supported": False,
+                            "zoom_supported": False,
+                        }
+                    )
+
+        data["cameras"] = [cameras_by_id[cam_id] for cam_id in ordered_camera_ids]
 
         try:
             storage_xml = await self._request_xml("GET", "/ISAPI/ContentMgmt/Storage")
