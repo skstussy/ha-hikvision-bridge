@@ -36,6 +36,14 @@ class DigestAuth:
     def ready(self) -> bool:
         return bool(self.realm and self.nonce)
 
+    def reset(self) -> None:
+        self.realm = None
+        self.nonce = None
+        self.opaque = None
+        self.qop = "auth"
+        self.algorithm = "MD5"
+        self.nc = 0
+
     def build(self, method: str, uri: str) -> str:
         if not self.ready():
             raise ValueError("Digest challenge not initialized")
@@ -71,3 +79,33 @@ class DigestAuth:
         if self.algorithm:
             parts.append(f'algorithm={self.algorithm}')
         return "Digest " + ", ".join(parts)
+
+    async def async_get_authorization(
+        self,
+        session,
+        method: str,
+        uri: str,
+        *,
+        body: str | bytes | None = None,
+        verify_ssl: bool = False,
+    ) -> str:
+        if self.ready():
+            return self.build(method, uri)
+
+        async with session.request(
+            method,
+            uri,
+            data=body,
+            ssl=verify_ssl,
+            allow_redirects=False,
+        ) as resp:
+            www_auth = resp.headers.get("WWW-Authenticate", "")
+            if resp.status != 401 or not www_auth:
+                raise ValueError(
+                    f"Digest challenge request failed with status {resp.status}"
+                )
+            self.parse(www_auth)
+
+        if not self.ready():
+            raise ValueError("Digest challenge not initialized")
+        return self.build(method, uri)
