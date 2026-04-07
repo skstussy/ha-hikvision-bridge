@@ -307,12 +307,14 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         stream_id = camera.get("stream_id")
         return {
             "profile": camera.get("stream_profile"),
+            "stream_profile": camera.get("stream_profile"),
             "requested_profile": camera.get("stream_profile_requested"),
             "resolved_profile": camera.get("stream_profile_resolved"),
             "options": list(camera.get("stream_profile_options") or []),
             "selection_source": camera.get("stream_profile_selection_source"),
             "id": stream_id,
             "stream_id": stream_id,
+            "name": camera.get("name"),
             "stream_name": camera.get("name"),
             "track_id": camera.get("track_id"),
             "rtsp_url": camera.get("rtsp_url"),
@@ -753,71 +755,19 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 }
             )
 
-        for cam_id, camera_meta in list(cameras_by_id.items()):
-            if camera_meta.get("stream_id"):
-                continue
+        ordered_camera_ids = sorted(
+            cameras_by_id,
+            key=lambda value: (
+                int(value) if str(value).isdigit() else str(value),
+            ),
+        )
 
-            profile_name = self._stream_profile_by_camera.get(str(cam_id), DEFAULT_STREAM_PROFILE)
-            stream_id = f"{cam_id}01"
-            camera_meta.update(
-                {
-                    "card_visible": True,
-                    "stream_profile": profile_name,
-                    "stream_profile_requested": profile_name,
-                    "stream_profile_resolved": DEFAULT_STREAM_PROFILE,
-                    "stream_profile_options": [DEFAULT_STREAM_PROFILE],
-                    "stream_profile_map": {DEFAULT_STREAM_PROFILE: stream_id},
-                    "stream_profile_selection_source": "implicit_main_stream",
-                    "stream_id": stream_id,
-                    "track_id": stream_id,
-                    "rtsp_url": build_rtsp_url(
-                        self.username,
-                        self.password,
-                        self.host,
-                        stream_id,
-                        self.rtsp_port,
-                    ),
-                    "rtsp_direct_url": build_rtsp_direct_url(
-                        self.username,
-                        self.password,
-                        self.host,
-                        stream_id,
-                        self.rtsp_port,
-                    ),
-                    "rtsp_profile": DEFAULT_STREAM_PROFILE,
-                    "transport": None,
-                    "video_codec": None,
-                    "width": None,
-                    "height": None,
-                    "bitrate_mode": None,
-                    "constant_bitrate": None,
-                    "max_frame_rate": None,
-                    "audio_codec": None,
-                    "ptz_supported": False,
-                    "ptz_proxy_supported": False,
-                    "ptz_direct_supported": False,
-                    "ptz_control_method": "none",
-                    "ptz_capability_mode": "unknown",
-                    "ptz_implementation": "none",
-                    "ptz_proxy_ctrl_mode": None,
-                    "ptz_momentary_supported": False,
-                    "ptz_continuous_supported": False,
-                    "ptz_proxy_momentary_supported": False,
-                    "ptz_proxy_continuous_supported": False,
-                    "ptz_direct_momentary_supported": False,
-                    "ptz_direct_continuous_supported": False,
-                    "ptz_unsupported_reason": None,
-                }
-            )
-
+        all_cameras = [cameras_by_id[cam_id] for cam_id in ordered_camera_ids]
+        data["all_cameras"] = list(all_cameras)
         data["cameras"] = [
-            cameras_by_id[cam_id]
-            for cam_id in sorted(
-                cameras_by_id,
-                key=lambda value: (
-                    int(value) if str(value).isdigit() else str(value),
-                ),
-            )
+            camera
+            for camera in all_cameras
+            if camera.get("stream_id")
         ]
 
         try:
