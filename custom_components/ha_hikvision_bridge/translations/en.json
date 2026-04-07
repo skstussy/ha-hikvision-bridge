@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add Hikvision recorder",
-        "description": "Enter the recorder connection settings used by Home Assistant to reach the Hikvision NVR or DVR.\n\nUse the local IP address or DNS name reachable from Home Assistant. Leave Verify SSL disabled when the recorder uses a self-signed certificate. Use an HTTPS port only when HTTPS is enabled on the recorder.",
+        "description": "Enter the recorder connection settings used by Home Assistant to reach the Hikvision NVR or DVR. Use a local IP address or DNS name reachable from Home Assistant. Leave Verify SSL disabled when the recorder uses a self-signed certificate. Use an HTTPS port only when HTTPS is enabled on the recorder.",
         "data": {
           "host": "Host or IP address",
           "port": "Port",
@@ -15,7 +15,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure Hikvision recorder",
-        "description": "Update the recorder connection settings without removing the integration entry.\n\nUse this when the recorder host, port, protocol, or credentials have changed.\n\nKeep the same recorder reachable from Home Assistant. Re-test credentials before saving. Enable Verify SSL only when Home Assistant trusts the recorder certificate.",
+        "description": "Update the recorder connection settings without removing the integration entry. Use this when the host, port, protocol, or credentials have changed. Keep the same recorder reachable from Home Assistant.",
         "data": {
           "host": "Host or IP address",
           "port": "Port",

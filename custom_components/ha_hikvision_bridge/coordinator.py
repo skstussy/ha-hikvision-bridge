@@ -381,6 +381,79 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             allow_empty=True,
         )
 
+
+
+    @staticmethod
+    def _xml_local_name(tag: str | None) -> str:
+        text = str(tag or "")
+        if "}" in text:
+            text = text.rsplit("}", 1)[-1]
+        if ":" in text:
+            text = text.rsplit(":", 1)[-1]
+        return text
+
+    def _xml_channel_matches(self, xml_obj: ET.Element | None, cam_key: str) -> bool:
+        if xml_obj is None:
+            return False
+        cam_key = str(cam_key)
+        for elem in xml_obj.iter():
+            if self._xml_local_name(getattr(elem, "tag", None)).lower() in {
+                "id",
+                "channelid",
+                "channel",
+                "inputproxyid",
+                "proxychannelid",
+            }:
+                value = (elem.text or "").strip()
+                if value == cam_key:
+                    return True
+        return False
+
+    def _extract_proxy_ctrl_mode(self, xml_obj: ET.Element | None) -> str | None:
+        if xml_obj is None:
+            return None
+        for elem in xml_obj.iter():
+            name = self._xml_local_name(getattr(elem, "tag", None)).lower()
+            if name in {"ctrlmode", "controlmode", "ptzctrlmode", "controltype"}:
+                value = (elem.text or "").strip()
+                if value:
+                    return value.lower()
+        return None
+
+    async def _probe_ptz_proxy_channel(self, cam_key: str) -> tuple[ET.Element | None, str | None]:
+        paths = [
+            f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}",
+            f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/capabilities",
+            "/ISAPI/ContentMgmt/PTZCtrlProxy/channels",
+        ]
+        mode: str | None = None
+        for path in paths:
+            try:
+                xml_obj = await self._request_xml("GET", path)
+            except Exception:
+                continue
+            if path.endswith("/channels") and not self._xml_channel_matches(xml_obj, cam_key):
+                continue
+            mode = self._extract_proxy_ctrl_mode(xml_obj) or mode
+            return xml_obj, mode
+        return None, mode
+
+    async def _send_ptz_momentary_command(
+        self,
+        cam_key: str,
+        body: str,
+        *,
+        capabilities: dict | None = None,
+    ) -> None:
+        caps = capabilities or await self._ensure_ptz_supported(cam_key)
+        if caps.get("ptz_proxy_momentary_supported"):
+            await self._send_put_xml(
+                f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/momentary",
+                body,
+            )
+            return
+        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
+
     async def _probe_ptz_capabilities(self, cam_id: str) -> dict:
         cam_key = str(cam_id)
         cached = self._ptz_capability_cache.get(cam_key)
@@ -419,25 +492,36 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             except Exception:
                 return None
 
+        proxy_info, proxy_mode = await self._probe_ptz_proxy_channel(cam_key)
+        if proxy_info is not None:
+            result["ptz_proxy_supported"] = True
+            result["ptz_momentary_supported"] = True
+            result["ptz_proxy_momentary_supported"] = True
+            result["ptz_proxy_ctrl_mode"] = proxy_mode or "momentary"
+            result["ptz_control_method"] = "momentary"
+            result["ptz_capability_mode"] = proxy_mode or "proxy"
+            result["ptz_implementation"] = "proxy"
+
         direct_info = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}")
         direct_caps = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/capabilities")
         if direct_info is not None or direct_caps is not None:
             result["ptz_direct_supported"] = True
-            result["ptz_momentary_supported"] = True
-            result["ptz_continuous_supported"] = True
             result["ptz_direct_momentary_supported"] = True
             result["ptz_direct_continuous_supported"] = True
-            result["ptz_control_method"] = "direct"
-            result["ptz_capability_mode"] = "isapi"
-            result["ptz_implementation"] = "ptzctrl"
+            result["ptz_momentary_supported"] = True
+            result["ptz_continuous_supported"] = True
+            if not result["ptz_proxy_supported"]:
+                result["ptz_control_method"] = "momentary"
+                result["ptz_capability_mode"] = "isapi"
+                result["ptz_implementation"] = "direct"
 
         focus_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/focus")
         iris_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/iris")
         result["focus_supported"] = focus_caps is not None
         result["iris_supported"] = iris_caps is not None
-        result["zoom_supported"] = result["ptz_direct_supported"] or result["ptz_proxy_supported"]
+        result["zoom_supported"] = result["ptz_proxy_momentary_supported"] or result["ptz_direct_momentary_supported"]
 
-        if result["ptz_direct_supported"] or result["ptz_proxy_supported"]:
+        if result["ptz_proxy_supported"] or result["ptz_direct_supported"]:
             result["ptz_supported"] = True
             result["ptz_unsupported_reason"] = None
         else:
@@ -469,7 +553,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
     async def ptz(self, cam_id: str, pan: int = 0, tilt: int = 0, duration: int = 500) -> None:
         cam_key = str(cam_id)
-        await self._ensure_ptz_supported(cam_key)
+        capabilities = await self._ensure_ptz_supported(cam_key)
         pan = max(-100, min(100, int(pan or 0)))
         tilt = max(-100, min(100, int(tilt or 0)))
         duration = max(0, int(duration or 0))
@@ -482,7 +566,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
-        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
+        await self._send_ptz_momentary_command(cam_key, body, capabilities=capabilities)
         self._push_debug_event(
             category="ptz",
             event="ptz_move_sent",
@@ -493,14 +577,27 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
     async def goto_preset(self, cam_id: str, preset: int) -> None:
         cam_key = str(cam_id)
-        await self._ensure_ptz_supported(cam_key)
+        capabilities = await self._ensure_ptz_supported(cam_key)
         preset_id = max(1, int(preset))
-        await self._request_text(
-            "PUT",
-            f"/ISAPI/PTZCtrl/channels/{cam_key}/presets/{preset_id}/goto",
-            expected=(200, 201, 204),
-            allow_empty=True,
-        )
+        preset_paths = []
+        if capabilities.get("ptz_proxy_supported"):
+            preset_paths.append(f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/presets/{preset_id}/goto")
+        preset_paths.append(f"/ISAPI/PTZCtrl/channels/{cam_key}/presets/{preset_id}/goto")
+        last_error = None
+        for path in preset_paths:
+            try:
+                await self._request_text(
+                    "PUT",
+                    path,
+                    expected=(200, 201, 204),
+                    allow_empty=True,
+                )
+                last_error = None
+                break
+            except Exception as err:
+                last_error = err
+        if last_error is not None:
+            raise last_error
         self._push_debug_event(
             category="ptz",
             event="ptz_goto_preset_sent",
@@ -555,7 +652,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
     async def zoom(self, cam_id: str, direction: int = 1, speed: int = 50, duration: int = 500) -> None:
         cam_key = str(cam_id)
-        await self._ensure_ptz_supported(cam_key)
+        capabilities = await self._ensure_ptz_supported(cam_key)
         speed = max(0, min(100, int(speed or 0)))
         direction_raw = int(direction or 0)
         direction = 0 if direction_raw == 0 else (1 if direction_raw > 0 else -1)
@@ -569,7 +666,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
-        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
+        await self._send_ptz_momentary_command(cam_key, body, capabilities=capabilities)
         self._push_debug_event(
             category="ptz",
             event="ptz_zoom_sent",
