@@ -100,12 +100,14 @@ class HikvisionFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 self._abort_if_unique_id_mismatch(reason="already_configured")
 
-                return self.async_update_reload_and_abort(
+                self.hass.config_entries.async_update_entry(
                     entry,
-                    unique_id=self.unique_id,
+                    data=user_input,
                     title=f"Hikvision DVR ({user_input[CONF_HOST]})",
-                    data_updates=user_input,
+                    unique_id=f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}",
                 )
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason="reconfigure_successful")
             errors["base"] = "cannot_connect"
 
         return self.async_show_form(
