@@ -194,6 +194,26 @@ def parse_input_proxy_channels(xml_obj: ET.Element | None) -> list[dict[str, Any
                 "name": safe_find_text(channel, "name", f"Camera {cam_id}") or f"Camera {cam_id}",
                 "online": coerce_bool(safe_find_text(channel, "online"), default=True),
                 "enabled": coerce_bool(safe_find_text(channel, "enabled"), default=True),
+                "model": safe_find_text(channel, "model") or safe_find_text(channel, "deviceModel"),
+                "serial_number": safe_find_text(channel, "serialNumber") or safe_find_text(channel, "deviceSerialNumber"),
+                "firmware_version": safe_find_text(channel, "firmwareVersion") or safe_find_text(channel, "deviceFirmwareVersion"),
+                "manufacturer": safe_find_text(channel, "manufacturer") or safe_find_text(channel, "vendor") or "Hikvision",
+                "ip_address": safe_find_text(channel, "ipAddress") or safe_find_text(channel, "ipv4Address") or safe_find_text(channel, "addressingFormatType"),
+                "manage_port": safe_find_text(channel, "managePortNo") or safe_find_text(channel, "managePort") or safe_find_text(channel, "srcInputPort"),
+            }
+        )
+    return channels
+
+    for channel in _iter_elements_by_local_name(xml_obj, "InputProxyChannel"):
+        cam_id = safe_find_text(channel, "id")
+        if not cam_id:
+            continue
+        channels.append(
+            {
+                "id": str(cam_id),
+                "name": safe_find_text(channel, "name", f"Camera {cam_id}") or f"Camera {cam_id}",
+                "online": coerce_bool(safe_find_text(channel, "online"), default=True),
+                "enabled": coerce_bool(safe_find_text(channel, "enabled"), default=True),
                 "model": safe_find_text(channel, "model"),
                 "serial_number": safe_find_text(channel, "serialNumber"),
                 "firmware_version": safe_find_text(channel, "firmwareVersion"),
@@ -206,6 +226,48 @@ def parse_streaming_channels(xml_obj: ET.Element | None) -> dict[str, list[dict[
     streams_by_camera: dict[str, list[dict[str, Any]]] = {}
     if xml_obj is None:
         return streams_by_camera
+
+    for channel in _iter_elements_by_local_name(xml_obj, "StreamingChannel"):
+        stream_id = safe_find_text(channel, "id")
+        if not stream_id:
+            continue
+
+        digits = "".join(ch for ch in str(stream_id) if ch.isdigit())
+        if len(digits) >= 3:
+            cam_id = str(int(digits[:-2]))
+        else:
+            cam_id = str(stream_id)
+
+        max_frame_rate = safe_find_text(channel, "maxFrameRate") or safe_find_text(channel, "frameRate")
+        bitrate = (
+            safe_find_text(channel, "constantBitRate")
+            or safe_find_text(channel, "maxBitRate")
+            or safe_find_text(channel, "bitRate")
+            or safe_find_text(channel, "vbrUpperCap")
+        )
+        entry = {
+            "id": str(stream_id),
+            "stream_id": str(stream_id),
+            "track_id": safe_find_text(channel, "trackID") or str(stream_id),
+            "name": safe_find_text(channel, "channelName") or safe_find_text(channel, "name") or f"Stream {stream_id}",
+            "profile": classify_stream_profile(stream_id),
+            "video_enabled": coerce_bool(
+                safe_find_text(channel, "enabled") or safe_find_text(channel, "videoEnabled"),
+                default=True,
+            ),
+            "transport": safe_find_text(channel, "transportType") or safe_find_text(channel, "TransportType") or safe_find_text(channel, "transType") or safe_find_text(channel, "streamTransport"),
+            "video_codec": safe_find_text(channel, "videoCodecType"),
+            "width": safe_find_text(channel, "videoResolutionWidth") or safe_find_text(channel, "resolutionWidth"),
+            "height": safe_find_text(channel, "videoResolutionHeight") or safe_find_text(channel, "resolutionHeight"),
+            "bitrate_mode": safe_find_text(channel, "videoBitRateType") or safe_find_text(channel, "bitRateType"),
+            "bitrate": bitrate,
+            "constant_bitrate": bitrate,
+            "max_frame_rate": max_frame_rate,
+            "audio_codec": safe_find_text(channel, "audioCompressionType"),
+        }
+        streams_by_camera.setdefault(cam_id, []).append(entry)
+
+    return streams_by_camera
 
     for channel in _iter_elements_by_local_name(xml_obj, "StreamingChannel"):
         stream_id = safe_find_text(channel, "id")
@@ -309,6 +371,32 @@ def build_nvr_device_info(dvr_serial: str, entry: Any, device_xml: Any) -> dict[
         "model": model,
         "sw_version": safe_find_text(device_xml, "firmwareVersion"),
         "serial_number": dvr_serial,
+    }
+
+
+def parse_device_info_xml(device_xml: ET.Element | None, host: str | None = None) -> dict[str, Any]:
+    """Normalize recorder deviceInfo XML into a consistent dict."""
+    fallback_host = str(host or "").strip()
+    default_name = f"Hikvision NVR ({fallback_host})" if fallback_host else "Hikvision NVR"
+    if device_xml is None:
+        return {
+            "name": default_name,
+            "manufacturer": "Hikvision",
+            "model": None,
+            "serial_number": None,
+            "firmware_version": None,
+            "host": fallback_host or None,
+        }
+
+    return {
+        "name": safe_find_text(device_xml, "deviceName", default_name) or default_name,
+        "manufacturer": safe_find_text(device_xml, "manufacturer", "Hikvision") or "Hikvision",
+        "model": safe_find_text(device_xml, "model"),
+        "serial_number": safe_find_text(device_xml, "serialNumber"),
+        "firmware_version": safe_find_text(device_xml, "firmwareVersion"),
+        "host": fallback_host or None,
+        "mac_address": safe_find_text(device_xml, "macAddress"),
+        "device_id": safe_find_text(device_xml, "deviceID"),
     }
 
 

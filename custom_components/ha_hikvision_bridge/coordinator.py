@@ -39,6 +39,7 @@ from .helpers import (
     coerce_bool,
     inject_rtsp_credentials,
     normalize_stream_profile,
+    parse_device_info_xml,
     parse_input_proxy_channels,
     parse_storage_capabilities_xml,
     parse_storage_xml,
@@ -551,60 +552,19 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         except Exception:
             pass
 
-    def _normalize_ptz_axes(
-        self,
-        pan: int = 0,
-        tilt: int = 0,
-        duration: int = 500,
-    ) -> tuple[int, int, int]:
-        """Normalize PTZ pulse values for cheaper proxy-momentary NVRs.
-
-        Horizontal pan typically needs a stronger momentary pulse than vertical
-        tilt on lower-cost Hikvision NVRs. Keep the public service contract the
-        same, but bias the actual proxy pulse so left/right movement is
-        noticeably responsive without changing zoom behavior.
-        """
-        pan_raw = max(-100, min(100, int(pan or 0)))
-        tilt_raw = max(-100, min(100, int(tilt or 0)))
-        duration_raw = max(0, int(duration or 0))
-
-        def normalize_axis(value: int, *, gain: float, floor: int) -> int:
-            if value == 0:
-                return 0
-            scaled = int(round(abs(value) * gain))
-            scaled = max(floor, scaled)
-            scaled = min(100, scaled)
-            return scaled if value > 0 else -scaled
-
-        pan_value = normalize_axis(pan_raw, gain=1.75, floor=35)
-        tilt_value = normalize_axis(tilt_raw, gain=1.15, floor=20)
-
-        if pan_value and not tilt_value:
-            duration_value = max(450, duration_raw)
-        elif tilt_value and not pan_value:
-            duration_value = max(320, duration_raw)
-        elif pan_value or tilt_value:
-            duration_value = max(380, duration_raw)
-        else:
-            duration_value = duration_raw
-
-        return pan_value, tilt_value, duration_value
-
     async def ptz(self, cam_id: str, pan: int = 0, tilt: int = 0, duration: int = 500) -> None:
         cam_key = str(cam_id)
         capabilities = await self._ensure_ptz_supported(cam_key)
-        pan_value, tilt_value, duration_value = self._normalize_ptz_axes(
-            pan=pan,
-            tilt=tilt,
-            duration=duration,
-        )
+        pan = max(-100, min(100, int(pan or 0)))
+        tilt = max(-100, min(100, int(tilt or 0)))
+        duration = max(0, int(duration or 0))
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<PTZData>'
-            f'<pan>{pan_value}</pan>'
-            f'<tilt>{tilt_value}</tilt>'
+            f'<pan>{pan}</pan>'
+            f'<tilt>{tilt}</tilt>'
             '<zoom>0</zoom>'
-            f'<Momentary><duration>{duration_value}</duration></Momentary>'
+            f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
         await self._send_ptz_momentary_command(cam_key, body, capabilities=capabilities)
@@ -613,14 +573,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             event="ptz_move_sent",
             message=f"PTZ move sent for camera {cam_key}",
             camera_id=cam_key,
-            context={
-                "pan": pan_value,
-                "tilt": tilt_value,
-                "duration": duration_value,
-                "requested_pan": max(-100, min(100, int(pan or 0))),
-                "requested_tilt": max(-100, min(100, int(tilt or 0))),
-                "requested_duration": max(0, int(duration or 0)),
-            },
+            context={"pan": pan, "tilt": tilt, "duration": duration},
         )
 
     async def goto_preset(self, cam_id: str, preset: int) -> None:
@@ -995,6 +948,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
         device_xml = await self._request_xml("GET", "/ISAPI/System/deviceInfo")
         data["device_xml"] = device_xml
+        data["nvr"] = {
+            "online": True,
+            **parse_device_info_xml(device_xml, host=self.host),
+        }
 
         proxy_channels_xml = await self._request_xml(
             "GET",
@@ -1025,6 +982,9 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "model": None,
                     "serial_number": None,
                     "firmware_version": None,
+                    "manufacturer": "Hikvision",
+                    "ip_address": None,
+                    "manage_port": None,
                 },
             )
 
@@ -1071,6 +1031,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "height": active_stream.get("height"),
                     "bitrate_mode": active_stream.get("bitrate_mode"),
                     "constant_bitrate": active_stream.get("constant_bitrate"),
+                    "bitrate": active_stream.get("bitrate") or active_stream.get("constant_bitrate"),
                     "max_frame_rate": active_stream.get("max_frame_rate"),
                     "audio_codec": active_stream.get("audio_codec"),
                     "ptz_supported": False,
@@ -1115,6 +1076,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "height": None,
                     "bitrate_mode": None,
                     "constant_bitrate": None,
+                    "bitrate": None,
                     "max_frame_rate": None,
                     "audio_codec": None,
                     "ptz_supported": False,
