@@ -63,6 +63,14 @@ class HikvisionCameraEntity(CoordinatorEntity, Camera):
     def _stream_profiles(self):
         return self.coordinator.get_stream_profiles(self._cam_id)
 
+    @staticmethod
+    def _profile_stream_id(profile_value):
+        if isinstance(profile_value, dict):
+            return profile_value.get("stream_id") or profile_value.get("id")
+        if isinstance(profile_value, str):
+            return profile_value
+        return None
+
     @property
     def brand(self):
         return "Hikvision"
@@ -108,8 +116,8 @@ class HikvisionCameraEntity(CoordinatorEntity, Camera):
             "stream_profile": self.coordinator.get_selected_stream_profile(self._cam_id),
             "stream_profile_label": "Main-stream" if self.coordinator.get_selected_stream_profile(self._cam_id) == "main" else "Sub-stream",
             "available_stream_profiles": sorted(list(profiles.keys())),
-            "main_stream_id": (profiles.get("main") or {}).get("stream_id"),
-            "sub_stream_id": (profiles.get("sub") or {}).get("stream_id"),
+            "main_stream_id": self._profile_stream_id(profiles.get("main")),
+            "sub_stream_id": self._profile_stream_id(profiles.get("sub")),
             "ptz_supported": cam.get("ptz_supported"),
             "ptz_proxy_supported": cam.get("ptz_proxy_supported"),
             "ptz_direct_supported": cam.get("ptz_direct_supported"),
