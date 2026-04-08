@@ -35,10 +35,11 @@
     "step": {
       "init": {
         "title": "Debug options",
-        "description": "Enable targeted debug categories for troubleshooting. Use a comma-separated list. Example: playback, isapi, websocket",
+        "description": "Enable targeted debug categories for troubleshooting. Use a comma-separated list. Example: playback, isapi, websocket. PTZ control path lets you choose direct PTZCtrl, PTZCtrlProxy, or automatic selection.",
         "data": {
           "debug_enabled": "Enable debug logging",
-          "debug_categories": "Debug categories"
+          "debug_categories": "Debug categories",
+          "ptz_control_path": "PTZ control path"
         }
       }
     }

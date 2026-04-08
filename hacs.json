@@ -1,7 +1,7 @@
 {
   "domain": "ha_hikvision_bridge",
   "name": "HA Hikvision Bridge",
-  "version": "1.0.0",
+  "version": "1.1.31",
   "content_in_root": false,
   "documentation": "https://github.com/skstussy/ha-hikvision-bridge",
   "issue_tracker": "https://github.com/skstussy/ha-hikvision-bridge/issues",

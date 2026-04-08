@@ -13,10 +13,12 @@ from .const import (
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
+    CONF_PTZ_CONTROL_PATH,
     CONF_USERNAME,
     CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
     DEFAULT_DEBUG_CATEGORIES,
+    DEFAULT_PTZ_CONTROL_PATH,
     DEFAULT_PORT_HTTP,
     DEFAULT_PORT_HTTPS,
     DEFAULT_USE_HTTPS,
@@ -169,6 +171,9 @@ class HikvisionOptionsFlow(config_entries.OptionsFlow):
                         user_input.get(CONF_DEBUG_ENABLED, False)
                     ),
                     CONF_DEBUG_CATEGORIES: categories,
+                    CONF_PTZ_CONTROL_PATH: str(
+                        user_input.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
+                    ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH,
                 },
             )
 
@@ -187,6 +192,12 @@ class HikvisionOptionsFlow(config_entries.OptionsFlow):
                     CONF_DEBUG_CATEGORIES,
                     default=", ".join(current_categories),
                 ): str,
+                vol.Optional(
+                    CONF_PTZ_CONTROL_PATH,
+                    default=self.config_entry.options.get(
+                        CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH
+                    ),
+                ): vol.In(("auto", "direct", "proxy")),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
