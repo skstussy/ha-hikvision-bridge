@@ -40,26 +40,37 @@ def _normalize_categories(raw_value) -> list[str]:
     return [item for item in values if item]
 
 
-def _build_connection_schema(defaults: dict | None = None) -> vol.Schema:
+def _build_connection_schema(
+    defaults: dict | None = None, *, include_ptz_control_path: bool = False
+) -> vol.Schema:
     defaults = defaults or {}
     use_https_default = defaults.get(CONF_USE_HTTPS, DEFAULT_USE_HTTPS)
     default_port = defaults.get(
         CONF_PORT,
         DEFAULT_PORT_HTTPS if use_https_default else DEFAULT_PORT_HTTP,
     )
-    return vol.Schema(
-        {
-            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
-            vol.Required(CONF_PORT, default=default_port): int,
-            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): str,
-            vol.Optional(CONF_USE_HTTPS, default=use_https_default): bool,
+    schema_dict = {
+        vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+        vol.Required(CONF_PORT, default=default_port): int,
+        vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
+        vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): str,
+        vol.Optional(CONF_USE_HTTPS, default=use_https_default): bool,
+        vol.Optional(
+            CONF_VERIFY_SSL,
+            default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+        ): bool,
+    }
+    if include_ptz_control_path:
+        schema_dict[
             vol.Optional(
-                CONF_VERIFY_SSL,
-                default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-            ): bool,
-        }
-    )
+                CONF_PTZ_CONTROL_PATH,
+                default=str(
+                    defaults.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
+                ).strip().lower()
+                or DEFAULT_PTZ_CONTROL_PATH,
+            )
+        ] = vol.In(("auto", "direct", "proxy"))
+    return vol.Schema(schema_dict)
 
 
 class HikvisionFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -95,20 +106,43 @@ class HikvisionFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            ok = await self._test_connection(user_input)
+            connection_input = {
+                CONF_HOST: user_input[CONF_HOST],
+                CONF_PORT: user_input[CONF_PORT],
+                CONF_USERNAME: user_input[CONF_USERNAME],
+                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                CONF_USE_HTTPS: user_input[CONF_USE_HTTPS],
+                CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL],
+            }
+            ok = await self._test_connection(connection_input)
             if ok:
+                ptz_control_path = str(
+                    user_input.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
+                ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH
                 self.hass.config_entries.async_update_entry(
                     entry,
-                    data=user_input,
+                    data=connection_input,
+                    options={
+                        **entry.options,
+                        CONF_PTZ_CONTROL_PATH: ptz_control_path,
+                    },
                     title=f"Hikvision DVR ({user_input[CONF_HOST]})",
                 )
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reconfigure_successful")
             errors["base"] = "cannot_connect"
 
+        defaults = {
+            **dict(entry.data),
+            CONF_PTZ_CONTROL_PATH: entry.options.get(
+                CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH
+            ),
+        }
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_build_connection_schema(dict(entry.data)),
+            data_schema=_build_connection_schema(
+                defaults, include_ptz_control_path=True
+            ),
             errors=errors,
         )
 

@@ -15,14 +15,15 @@
       },
       "reconfigure": {
         "title": "Reconfigure Hikvision recorder",
-        "description": "Update the recorder connection settings without removing the integration entry. Use this when the host, port, protocol, or credentials have changed. Keep the same recorder reachable from Home Assistant.",
+        "description": "Update the recorder connection settings without removing the integration entry. Use this when the host, port, protocol, credentials, or PTZ control path have changed. Keep the same recorder reachable from Home Assistant.",
         "data": {
           "host": "Host or IP address",
           "port": "Port",
           "username": "Username",
           "password": "Password",
           "use_https": "Use HTTPS",
-          "verify_ssl": "Verify SSL certificate"
+          "verify_ssl": "Verify SSL certificate",
+          "ptz_control_path": "PTZ control path"
         }
       }
     },
