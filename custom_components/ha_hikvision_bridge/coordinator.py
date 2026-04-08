@@ -106,49 +106,42 @@ def _format_search_timestamp(value: str | None) -> str | None:
 
 
 def _candidate_playback_track_ids(cam: dict, active_stream: dict, profiles: dict) -> list[str]:
-    """Return canonical DVR recording tracks for playback search.
+    """Return canonical DVR main-stream recording tracks for playback search.
 
-    Playback recordings on this DVR exist only on the main stream track for a
-    channel, e.g. CH1->101, CH2->201, CH3->301. Keep playback track selection
-    separate from live-view stream selection to avoid regressions when the user
-    is viewing the sub-stream in live mode.
+    Playback recordings on Hikvision DVR/NVR channels are exposed on the main
+    recording track for a channel, e.g. CH1 -> 101, CH2 -> 201, CH3 -> 301.
+    Never search playback using the currently selected live-view stream because
+    live mode may be on a sub-stream while recordings still exist only on the
+    channel's main stream track.
     """
+    del active_stream  # Playback search must not depend on live stream selection.
+
     values: list[str] = []
     seen: set[str] = set()
-
-    def add(value) -> None:
-        raw = str(value or "").strip()
-        if raw and raw not in seen:
-            seen.add(raw)
-            values.append(raw)
 
     def add_main_recording_track(value) -> None:
         raw = str(value or "").strip()
         if not raw:
             return
+
         digits = "".join(ch for ch in raw if ch.isdigit())
         if not digits:
             return
+
         try:
             channel_num = int(digits)
         except ValueError:
             return
-        add(f"{channel_num}01")
+
+        track_id = f"{channel_num}01"
+        if track_id not in seen:
+            seen.add(track_id)
+            values.append(track_id)
 
     add_main_recording_track(cam.get("id"))
-    add(active_stream.get("id"))
-    add_main_recording_track(active_stream.get("id"))
-    add(active_stream.get("track_id"))
-    add_main_recording_track(active_stream.get("track_id"))
 
     for profile in ("main", "mainstream"):
-        add(profiles.get(profile))
         add_main_recording_track(profiles.get(profile))
-
-    for key, value in profiles.items():
-        add(value)
-        if key in {"main", "mainstream"}:
-            add_main_recording_track(value)
 
     return values
 
