@@ -6,6 +6,7 @@ from datetime import timedelta, datetime
 from urllib.parse import quote
 from yarl import URL
 import xml.etree.ElementTree as ET
+from typing import Any
 
 from aiohttp import ClientError, ClientResponseError
 from homeassistant.core import HomeAssistant
@@ -39,6 +40,7 @@ from .helpers import (
     coerce_bool,
     inject_rtsp_credentials,
     normalize_stream_profile,
+    merge_storage_sources,
     parse_input_proxy_channels,
     parse_storage_capabilities_xml,
     parse_storage_xml,
@@ -327,6 +329,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             "constant_bitrate": camera.get("constant_bitrate"),
             "max_frame_rate": camera.get("max_frame_rate"),
             "audio_codec": camera.get("audio_codec"),
+            "video_input_channel_id": camera.get("video_input_channel_id"),
+            "bitrate": camera.get("bitrate"),
+            "width": camera.get("width"),
+            "height": camera.get("height"),
         }
 
     def get_selected_stream_profile(self, cam_id: str) -> str:
@@ -381,79 +387,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             allow_empty=True,
         )
 
-
-
-    @staticmethod
-    def _xml_local_name(tag: str | None) -> str:
-        text = str(tag or "")
-        if "}" in text:
-            text = text.rsplit("}", 1)[-1]
-        if ":" in text:
-            text = text.rsplit(":", 1)[-1]
-        return text
-
-    def _xml_channel_matches(self, xml_obj: ET.Element | None, cam_key: str) -> bool:
-        if xml_obj is None:
-            return False
-        cam_key = str(cam_key)
-        for elem in xml_obj.iter():
-            if self._xml_local_name(getattr(elem, "tag", None)).lower() in {
-                "id",
-                "channelid",
-                "channel",
-                "inputproxyid",
-                "proxychannelid",
-            }:
-                value = (elem.text or "").strip()
-                if value == cam_key:
-                    return True
-        return False
-
-    def _extract_proxy_ctrl_mode(self, xml_obj: ET.Element | None) -> str | None:
-        if xml_obj is None:
-            return None
-        for elem in xml_obj.iter():
-            name = self._xml_local_name(getattr(elem, "tag", None)).lower()
-            if name in {"ctrlmode", "controlmode", "ptzctrlmode", "controltype"}:
-                value = (elem.text or "").strip()
-                if value:
-                    return value.lower()
-        return None
-
-    async def _probe_ptz_proxy_channel(self, cam_key: str) -> tuple[ET.Element | None, str | None]:
-        paths = [
-            f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}",
-            f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/capabilities",
-            "/ISAPI/ContentMgmt/PTZCtrlProxy/channels",
-        ]
-        mode: str | None = None
-        for path in paths:
-            try:
-                xml_obj = await self._request_xml("GET", path)
-            except Exception:
-                continue
-            if path.endswith("/channels") and not self._xml_channel_matches(xml_obj, cam_key):
-                continue
-            mode = self._extract_proxy_ctrl_mode(xml_obj) or mode
-            return xml_obj, mode
-        return None, mode
-
-    async def _send_ptz_momentary_command(
-        self,
-        cam_key: str,
-        body: str,
-        *,
-        capabilities: dict | None = None,
-    ) -> None:
-        caps = capabilities or await self._ensure_ptz_supported(cam_key)
-        if caps.get("ptz_proxy_momentary_supported"):
-            await self._send_put_xml(
-                f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/momentary",
-                body,
-            )
-            return
-        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
-
     async def _probe_ptz_capabilities(self, cam_id: str) -> dict:
         cam_key = str(cam_id)
         cached = self._ptz_capability_cache.get(cam_key)
@@ -492,36 +425,25 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             except Exception:
                 return None
 
-        proxy_info, proxy_mode = await self._probe_ptz_proxy_channel(cam_key)
-        if proxy_info is not None:
-            result["ptz_proxy_supported"] = True
-            result["ptz_momentary_supported"] = True
-            result["ptz_proxy_momentary_supported"] = True
-            result["ptz_proxy_ctrl_mode"] = proxy_mode or "momentary"
-            result["ptz_control_method"] = "momentary"
-            result["ptz_capability_mode"] = proxy_mode or "proxy"
-            result["ptz_implementation"] = "proxy"
-
         direct_info = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}")
         direct_caps = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/capabilities")
         if direct_info is not None or direct_caps is not None:
             result["ptz_direct_supported"] = True
-            result["ptz_direct_momentary_supported"] = True
-            result["ptz_direct_continuous_supported"] = True
             result["ptz_momentary_supported"] = True
             result["ptz_continuous_supported"] = True
-            if not result["ptz_proxy_supported"]:
-                result["ptz_control_method"] = "momentary"
-                result["ptz_capability_mode"] = "isapi"
-                result["ptz_implementation"] = "direct"
+            result["ptz_direct_momentary_supported"] = True
+            result["ptz_direct_continuous_supported"] = True
+            result["ptz_control_method"] = "direct"
+            result["ptz_capability_mode"] = "isapi"
+            result["ptz_implementation"] = "ptzctrl"
 
         focus_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/focus")
         iris_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/iris")
         result["focus_supported"] = focus_caps is not None
         result["iris_supported"] = iris_caps is not None
-        result["zoom_supported"] = result["ptz_proxy_momentary_supported"] or result["ptz_direct_momentary_supported"]
+        result["zoom_supported"] = result["ptz_direct_supported"] or result["ptz_proxy_supported"]
 
-        if result["ptz_proxy_supported"] or result["ptz_direct_supported"]:
+        if result["ptz_direct_supported"] or result["ptz_proxy_supported"]:
             result["ptz_supported"] = True
             result["ptz_unsupported_reason"] = None
         else:
@@ -551,105 +473,40 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         except Exception:
             pass
 
-    def _normalize_ptz_axes(
-        self,
-        pan: int = 0,
-        tilt: int = 0,
-        duration: int = 500,
-    ) -> tuple[int, int, int]:
-        """Normalize PTZ pulse values for cheaper proxy-momentary NVRs.
-
-        Horizontal pan typically needs a stronger momentary pulse than vertical
-        tilt on lower-cost Hikvision NVRs. Keep the public service contract the
-        same, but bias the actual proxy pulse so left/right movement is
-        noticeably responsive without changing zoom behavior.
-        """
-        pan_raw = max(-100, min(100, int(pan or 0)))
-        tilt_raw = max(-100, min(100, int(tilt or 0)))
-        duration_raw = max(0, int(duration or 0))
-
-        def normalize_axis(value: int, *, gain: float, floor: int) -> int:
-            if value == 0:
-                return 0
-            scaled = int(round(abs(value) * gain))
-            scaled = max(floor, scaled)
-            scaled = min(100, scaled)
-            return scaled if value > 0 else -scaled
-
-        pan_value = normalize_axis(pan_raw, gain=2.1, floor=55)
-        tilt_value = normalize_axis(tilt_raw, gain=1.45, floor=30)
-
-        # Proxy momentary PTZ on lower-cost Hikvision NVRs responds best to
-        # shorter, stronger pulses repeated quickly while the user is holding a
-        # direction. Long minimum durations make movement feel sluggish and hide
-        # the effect of the speed slider, especially on horizontal pan.
-        if pan_value and not tilt_value:
-            duration_value = max(140, min(220, duration_raw or 0))
-        elif tilt_value and not pan_value:
-            duration_value = max(130, min(200, duration_raw or 0))
-        elif pan_value or tilt_value:
-            duration_value = max(140, min(210, duration_raw or 0))
-        else:
-            duration_value = duration_raw
-
-        return pan_value, tilt_value, duration_value
-
     async def ptz(self, cam_id: str, pan: int = 0, tilt: int = 0, duration: int = 500) -> None:
         cam_key = str(cam_id)
-        capabilities = await self._ensure_ptz_supported(cam_key)
-        pan_value, tilt_value, duration_value = self._normalize_ptz_axes(
-            pan=pan,
-            tilt=tilt,
-            duration=duration,
-        )
+        await self._ensure_ptz_supported(cam_key)
+        pan = max(-100, min(100, int(pan or 0)))
+        tilt = max(-100, min(100, int(tilt or 0)))
+        duration = max(0, int(duration or 0))
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<PTZData>'
-            f'<pan>{pan_value}</pan>'
-            f'<tilt>{tilt_value}</tilt>'
+            f'<pan>{pan}</pan>'
+            f'<tilt>{tilt}</tilt>'
             '<zoom>0</zoom>'
-            f'<Momentary><duration>{duration_value}</duration></Momentary>'
+            f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
-        await self._send_ptz_momentary_command(cam_key, body, capabilities=capabilities)
+        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
         self._push_debug_event(
             category="ptz",
             event="ptz_move_sent",
             message=f"PTZ move sent for camera {cam_key}",
             camera_id=cam_key,
-            context={
-                "pan": pan_value,
-                "tilt": tilt_value,
-                "duration": duration_value,
-                "requested_pan": max(-100, min(100, int(pan or 0))),
-                "requested_tilt": max(-100, min(100, int(tilt or 0))),
-                "requested_duration": max(0, int(duration or 0)),
-            },
+            context={"pan": pan, "tilt": tilt, "duration": duration},
         )
 
     async def goto_preset(self, cam_id: str, preset: int) -> None:
         cam_key = str(cam_id)
-        capabilities = await self._ensure_ptz_supported(cam_key)
+        await self._ensure_ptz_supported(cam_key)
         preset_id = max(1, int(preset))
-        preset_paths = []
-        if capabilities.get("ptz_proxy_supported"):
-            preset_paths.append(f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/presets/{preset_id}/goto")
-        preset_paths.append(f"/ISAPI/PTZCtrl/channels/{cam_key}/presets/{preset_id}/goto")
-        last_error = None
-        for path in preset_paths:
-            try:
-                await self._request_text(
-                    "PUT",
-                    path,
-                    expected=(200, 201, 204),
-                    allow_empty=True,
-                )
-                last_error = None
-                break
-            except Exception as err:
-                last_error = err
-        if last_error is not None:
-            raise last_error
+        await self._request_text(
+            "PUT",
+            f"/ISAPI/PTZCtrl/channels/{cam_key}/presets/{preset_id}/goto",
+            expected=(200, 201, 204),
+            allow_empty=True,
+        )
         self._push_debug_event(
             category="ptz",
             event="ptz_goto_preset_sent",
@@ -704,7 +561,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
     async def zoom(self, cam_id: str, direction: int = 1, speed: int = 50, duration: int = 500) -> None:
         cam_key = str(cam_id)
-        capabilities = await self._ensure_ptz_supported(cam_key)
+        await self._ensure_ptz_supported(cam_key)
         speed = max(0, min(100, int(speed or 0)))
         direction_raw = int(direction or 0)
         direction = 0 if direction_raw == 0 else (1 if direction_raw > 0 else -1)
@@ -718,7 +575,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
-        await self._send_ptz_momentary_command(cam_key, body, capabilities=capabilities)
+        await self._send_put_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/momentary", body)
         self._push_debug_event(
             category="ptz",
             event="ptz_zoom_sent",
@@ -799,13 +656,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             stream = self.get_active_stream(cam_id)
         else:
             profiles = self.get_stream_profiles(cam_id)
-            selected = profiles.get(normalize_stream_profile(selected_profile))
-            if isinstance(selected, dict):
-                stream = dict(selected)
-            else:
-                stream = {}
-                if selected not in (None, ""):
-                    stream["id"] = str(selected)
+            stream = dict(profiles.get(normalize_stream_profile(selected_profile)) or {})
             if stream:
                 stream.setdefault("rtsp_url", build_rtsp_url(
                     self.username,
@@ -999,6 +850,17 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
         device_xml = await self._request_xml("GET", "/ISAPI/System/deviceInfo")
         data["device_xml"] = device_xml
+        data["nvr"] = {
+            "online": True,
+            "name": safe_find_text(device_xml, "deviceName") or safe_find_text(device_xml, "name") or self.entry.title or f"Hikvision NVR ({self.host})",
+            "manufacturer": safe_find_text(device_xml, "manufacturer") or "Hikvision",
+            "model": safe_find_text(device_xml, "model"),
+            "firmware_version": safe_find_text(device_xml, "firmwareVersion"),
+            "serial_number": safe_find_text(device_xml, "serialNumber"),
+            "build_number": safe_find_text(device_xml, "build") or safe_find_text(device_xml, "buildNumber"),
+            "device_type": safe_find_text(device_xml, "deviceType"),
+            "host": self.host,
+        }
 
         proxy_channels_xml = await self._request_xml(
             "GET",
@@ -1075,8 +937,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "height": active_stream.get("height"),
                     "bitrate_mode": active_stream.get("bitrate_mode"),
                     "constant_bitrate": active_stream.get("constant_bitrate"),
+                    "bitrate": active_stream.get("constant_bitrate"),
                     "max_frame_rate": active_stream.get("max_frame_rate"),
                     "audio_codec": active_stream.get("audio_codec"),
+                    "video_input_channel_id": active_stream.get("video_input_channel_id"),
                     "ptz_supported": False,
                     "ptz_proxy_supported": False,
                     "ptz_direct_supported": False,
@@ -1119,8 +983,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "height": None,
                     "bitrate_mode": None,
                     "constant_bitrate": None,
+                    "bitrate": None,
                     "max_frame_rate": None,
                     "audio_codec": None,
+                    "video_input_channel_id": None,
                     "ptz_supported": False,
                     "ptz_proxy_supported": False,
                     "ptz_direct_supported": False,
@@ -1175,19 +1041,64 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
         data["cameras"] = [cameras_by_id[cam_id] for cam_id in ordered_camera_ids]
 
+        storage_info: dict[str, Any] = {}
+        storage_caps: dict[str, Any] = {}
+        storage_hdd_caps: dict[str, Any] = {}
+        storage_extra_caps: dict[str, Any] = {}
+
         try:
             storage_xml = await self._request_xml("GET", "/ISAPI/ContentMgmt/Storage")
-            data["storage"] = parse_storage_xml(storage_xml)
+            storage_info = parse_storage_xml(storage_xml)
+            storage_info["storage_info_supported"] = True
         except Exception:
-            data["storage"] = {}
+            storage_info = {"storage_info_supported": False}
 
         try:
             storage_capabilities = await self._request_xml(
                 "GET", "/ISAPI/ContentMgmt/Storage/capabilities"
             )
-            data["storage_capabilities"] = parse_storage_capabilities_xml(storage_capabilities)
+            storage_caps = parse_storage_capabilities_xml(storage_capabilities)
         except Exception:
-            data["storage_capabilities"] = {}
+            storage_caps = {}
+
+        try:
+            storage_hdd_caps_xml = await self._request_xml(
+                "GET", "/ISAPI/ContentMgmt/Storage/hdd/capabilities"
+            )
+            storage_hdd_caps = parse_storage_capabilities_xml(storage_hdd_caps_xml)
+            storage_hdd_caps["storage_hdd_caps_supported"] = True
+        except Exception:
+            storage_hdd_caps = {"storage_hdd_caps_supported": False}
+
+        try:
+            storage_extra_caps_xml = await self._request_xml(
+                "GET", "/ISAPI/ContentMgmt/Storage/ExtraInfo/capabilities"
+            )
+            storage_extra_caps = parse_storage_capabilities_xml(storage_extra_caps_xml)
+            storage_extra_caps["storage_extra_caps_supported"] = True
+        except Exception:
+            storage_extra_caps = {"storage_extra_caps_supported": False}
+
+        data["storage_capabilities"] = merge_storage_sources(storage_caps, storage_hdd_caps, storage_extra_caps)
+        data["storage"] = merge_storage_sources(storage_info, storage_caps, storage_hdd_caps, storage_extra_caps)
+        data["nvr"].update(
+            {
+                "storage_present": data["storage"].get("storage_present"),
+                "playback_supported": data["storage"].get("playback_supported"),
+                "disk_count": data["storage"].get("disk_count"),
+                "healthy_disks": data["storage"].get("healthy_disks"),
+                "failed_disks": data["storage"].get("failed_disks"),
+                "disk_mode": data["storage"].get("disk_mode"),
+                "work_mode": data["storage"].get("work_mode"),
+                "total_capacity_mb": data["storage"].get("total_capacity_mb"),
+                "free_capacity_mb": data["storage"].get("free_capacity_mb"),
+                "used_capacity_mb": data["storage"].get("used_capacity_mb"),
+                "hdds": data["storage"].get("hdds", []),
+                "storage_info_supported": data["storage"].get("storage_info_supported", False),
+                "storage_hdd_caps_supported": data["storage"].get("storage_hdd_caps_supported", False),
+                "storage_extra_caps_supported": data["storage"].get("storage_extra_caps_supported", False),
+            }
+        )
 
         return data
 
