@@ -177,9 +177,11 @@ class HikvisionOptionsFlow(config_entries.OptionsFlow):
                 },
             )
 
-        current_categories = self.config_entry.options.get(
-            CONF_DEBUG_CATEGORIES, list(DEFAULT_DEBUG_CATEGORIES)
-        )
+        current_categories = _normalize_categories(
+            self.config_entry.options.get(
+                CONF_DEBUG_CATEGORIES, list(DEFAULT_DEBUG_CATEGORIES)
+            )
+        ) or list(DEFAULT_DEBUG_CATEGORIES)
         schema = vol.Schema(
             {
                 vol.Optional(
@@ -194,9 +196,12 @@ class HikvisionOptionsFlow(config_entries.OptionsFlow):
                 ): str,
                 vol.Optional(
                     CONF_PTZ_CONTROL_PATH,
-                    default=self.config_entry.options.get(
-                        CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH
-                    ),
+                    default=str(
+                        self.config_entry.options.get(
+                            CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH
+                        )
+                    ).strip().lower()
+                    or DEFAULT_PTZ_CONTROL_PATH,
                 ): vol.In(("auto", "direct", "proxy")),
             }
         )
