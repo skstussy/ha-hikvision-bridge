@@ -89,15 +89,29 @@ class HikvisionFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
                 )
                 self._abort_if_unique_id_configured()
+                connection_data = {
+                    CONF_HOST: user_input[CONF_HOST],
+                    CONF_PORT: user_input[CONF_PORT],
+                    CONF_USERNAME: user_input[CONF_USERNAME],
+                    CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    CONF_USE_HTTPS: user_input[CONF_USE_HTTPS],
+                    CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL],
+                }
+                ptz_control_path = str(
+                    user_input.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
+                ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH
                 return self.async_create_entry(
                     title=f"Hikvision DVR ({user_input[CONF_HOST]})",
-                    data=user_input,
+                    data=connection_data,
+                    options={CONF_PTZ_CONTROL_PATH: ptz_control_path},
                 )
             errors["base"] = "cannot_connect"
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_build_connection_schema(),
+            data_schema=_build_connection_schema(
+                user_input or {}, include_ptz_control_path=True
+            ),
             errors=errors,
         )
 

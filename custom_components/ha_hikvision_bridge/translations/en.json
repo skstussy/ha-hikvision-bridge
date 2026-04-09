@@ -3,14 +3,15 @@
     "step": {
       "user": {
         "title": "Add Hikvision recorder",
-        "description": "Enter the recorder connection settings used by Home Assistant to reach the Hikvision NVR or DVR. Use a local IP address or DNS name reachable from Home Assistant. Leave Verify SSL disabled when the recorder uses a self-signed certificate. Use an HTTPS port only when HTTPS is enabled on the recorder.",
+        "description": "Enter the recorder connection settings used by Home Assistant to reach the Hikvision NVR or DVR. Use a local IP address or DNS name reachable from Home Assistant. Leave Verify SSL disabled when the recorder uses a self-signed certificate. Use an HTTPS port only when HTTPS is enabled on the recorder. PTZ control path selects whether movement uses direct PTZCtrl, PTZCtrlProxy, or automatic selection.",
         "data": {
           "host": "Host or IP address",
           "port": "Port",
           "username": "Username",
           "password": "Password",
           "use_https": "Use HTTPS",
-          "verify_ssl": "Verify SSL certificate"
+          "verify_ssl": "Verify SSL certificate",
+          "ptz_control_path": "PTZ control path"
         }
       },
       "reconfigure": {
