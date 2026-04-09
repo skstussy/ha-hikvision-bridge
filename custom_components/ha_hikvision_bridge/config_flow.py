@@ -18,7 +18,6 @@ from .const import (
     CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
     DEFAULT_DEBUG_CATEGORIES,
-    DEFAULT_PTZ_CONTROL_PATH,
     DEFAULT_PORT_HTTP,
     DEFAULT_PORT_HTTPS,
     DEFAULT_USE_HTTPS,
@@ -40,9 +39,7 @@ def _normalize_categories(raw_value) -> list[str]:
     return [item for item in values if item]
 
 
-def _build_connection_schema(
-    defaults: dict | None = None, *, include_ptz_control_path: bool = False
-) -> vol.Schema:
+def _build_connection_schema(defaults: dict | None = None) -> vol.Schema:
     defaults = defaults or {}
     use_https_default = defaults.get(CONF_USE_HTTPS, DEFAULT_USE_HTTPS)
     default_port = defaults.get(
@@ -60,16 +57,6 @@ def _build_connection_schema(
             default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
         ): bool,
     }
-    if include_ptz_control_path:
-        schema_dict[
-            vol.Optional(
-                CONF_PTZ_CONTROL_PATH,
-                default=str(
-                    defaults.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
-                ).strip().lower()
-                or DEFAULT_PTZ_CONTROL_PATH,
-            )
-        ] = vol.In(("auto", "direct", "proxy"))
     return vol.Schema(schema_dict)
 
 
@@ -97,21 +84,16 @@ class HikvisionFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_USE_HTTPS: user_input[CONF_USE_HTTPS],
                     CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL],
                 }
-                ptz_control_path = str(
-                    user_input.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
-                ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH
                 return self.async_create_entry(
                     title=f"Hikvision DVR ({user_input[CONF_HOST]})",
                     data=connection_data,
-                    options={CONF_PTZ_CONTROL_PATH: ptz_control_path},
+                    options={},
                 )
             errors["base"] = "cannot_connect"
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_build_connection_schema(
-                user_input or {}, include_ptz_control_path=True
-            ),
+            data_schema=_build_connection_schema(user_input or {}),
             errors=errors,
         )
 
@@ -130,33 +112,23 @@ class HikvisionFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             ok = await self._test_connection(connection_input)
             if ok:
-                ptz_control_path = str(
-                    user_input.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
-                ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH
                 self.hass.config_entries.async_update_entry(
                     entry,
                     data=connection_input,
                     options={
-                        **entry.options,
-                        CONF_PTZ_CONTROL_PATH: ptz_control_path,
+                        key: value
+                        for key, value in entry.options.items()
+                        if key != CONF_PTZ_CONTROL_PATH
                     },
                     title=f"Hikvision DVR ({user_input[CONF_HOST]})",
                 )
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reconfigure_successful")
             errors["base"] = "cannot_connect"
-
-        defaults = {
-            **dict(entry.data),
-            CONF_PTZ_CONTROL_PATH: entry.options.get(
-                CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH
-            ),
-        }
+        defaults = dict(entry.data)
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_build_connection_schema(
-                defaults, include_ptz_control_path=True
-            ),
+            data_schema=_build_connection_schema(defaults),
             errors=errors,
         )
 
@@ -219,9 +191,6 @@ class HikvisionOptionsFlow(config_entries.OptionsFlow):
                         user_input.get(CONF_DEBUG_ENABLED, False)
                     ),
                     CONF_DEBUG_CATEGORIES: categories,
-                    CONF_PTZ_CONTROL_PATH: str(
-                        user_input.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
-                    ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH,
                 },
             )
 
@@ -242,15 +211,6 @@ class HikvisionOptionsFlow(config_entries.OptionsFlow):
                     CONF_DEBUG_CATEGORIES,
                     default=", ".join(current_categories),
                 ): str,
-                vol.Optional(
-                    CONF_PTZ_CONTROL_PATH,
-                    default=str(
-                        self.config_entry.options.get(
-                            CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH
-                        )
-                    ).strip().lower()
-                    or DEFAULT_PTZ_CONTROL_PATH,
-                ): vol.In(("auto", "direct", "proxy")),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

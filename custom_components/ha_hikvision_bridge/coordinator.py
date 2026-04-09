@@ -24,14 +24,9 @@ from .const import (
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
-    CONF_PTZ_CONTROL_PATH,
     CONF_USERNAME,
     CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
-    DEFAULT_PTZ_CONTROL_PATH,
-    PTZ_CONTROL_PATH_AUTO,
-    PTZ_CONTROL_PATH_DIRECT,
-    PTZ_CONTROL_PATH_PROXY,
     DEFAULT_RTSP_PORT,
     DEFAULT_STREAM_PROFILE,
     DOMAIN,
@@ -170,9 +165,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         self.rtsp_port = DEFAULT_RTSP_PORT
         self._alarm_stream_task: asyncio.Task | None = None
         self._ptz_state: dict[str, dict] = {}
-        self._ptz_control_path = str(
-            entry.options.get(CONF_PTZ_CONTROL_PATH, DEFAULT_PTZ_CONTROL_PATH)
-        ).strip().lower() or DEFAULT_PTZ_CONTROL_PATH
         self._ptz_capability_cache: dict[str, dict] = {}
         self._playback_debug_by_camera: dict[str, list[dict]] = {}
         self._stream_profile_by_camera: dict[str, str] = {str(k): normalize_stream_profile(v) for k, v in entry.options.get("stream_profile_by_camera", {}).items()}
@@ -388,38 +380,9 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             allow_empty=True,
         )
 
-    def _get_ptz_control_preference(self) -> str:
-        value = str(getattr(self, "_ptz_control_path", DEFAULT_PTZ_CONTROL_PATH)).strip().lower()
-        if value in {PTZ_CONTROL_PATH_AUTO, PTZ_CONTROL_PATH_DIRECT, PTZ_CONTROL_PATH_PROXY}:
-            return value
-        return DEFAULT_PTZ_CONTROL_PATH
-
-    def _resolve_ptz_transport(self, capabilities: dict) -> str:
-        preference = self._get_ptz_control_preference()
-        proxy_supported = bool(capabilities.get("ptz_proxy_supported"))
-        direct_supported = bool(capabilities.get("ptz_direct_supported"))
-        if preference == PTZ_CONTROL_PATH_PROXY:
-            if proxy_supported:
-                return PTZ_CONTROL_PATH_PROXY
-            if direct_supported:
-                return PTZ_CONTROL_PATH_DIRECT
-        elif preference == PTZ_CONTROL_PATH_AUTO:
-            if proxy_supported:
-                return PTZ_CONTROL_PATH_PROXY
-            if direct_supported:
-                return PTZ_CONTROL_PATH_DIRECT
-        else:
-            if direct_supported:
-                return PTZ_CONTROL_PATH_DIRECT
-            if proxy_supported:
-                return PTZ_CONTROL_PATH_PROXY
-        return "none"
-
-    def _build_ptz_endpoint(self, cam_id: str, transport: str, operation: str) -> str:
+    def _build_ptz_endpoint(self, cam_id: str, operation: str) -> str:
         cam_key = str(cam_id)
-        if transport == PTZ_CONTROL_PATH_PROXY:
-            return f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/{operation}"
-        return f"/ISAPI/PTZCtrl/channels/{cam_key}/{operation}"
+        return f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/{operation}"
 
     async def _probe_ptz_capabilities(self, cam_id: str) -> dict:
         cam_key = str(cam_id)
@@ -430,7 +393,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         result = {
             "ptz_supported": False,
             "ptz_proxy_supported": False,
-            "ptz_direct_supported": False,
             "ptz_control_method": "none",
             "ptz_capability_mode": "unknown",
             "ptz_implementation": "none",
@@ -439,8 +401,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             "ptz_continuous_supported": False,
             "ptz_proxy_momentary_supported": False,
             "ptz_proxy_continuous_supported": False,
-            "ptz_direct_momentary_supported": False,
-            "ptz_direct_continuous_supported": False,
             "ptz_unsupported_reason": None,
             "focus_supported": False,
             "iris_supported": False,
@@ -460,45 +420,30 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 return None
 
         proxy_info = await probe_xml(f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}")
-        proxy_caps = await probe_xml(f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/capabilities")
+        proxy_caps = await probe_xml(
+            f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/capabilities"
+        )
         if proxy_info is not None or proxy_caps is not None:
+            result["ptz_supported"] = True
             result["ptz_proxy_supported"] = True
-            result["ptz_momentary_supported"] = True
-            result["ptz_continuous_supported"] = True
-            result["ptz_proxy_momentary_supported"] = True
-            result["ptz_proxy_continuous_supported"] = True
-            result["ptz_proxy_ctrl_mode"] = "isapi"
             result["ptz_control_method"] = "proxy"
-            result["ptz_capability_mode"] = "isapi"
+            result["ptz_capability_mode"] = "momentary"
             result["ptz_implementation"] = "ptzctrlproxy"
-
-        direct_info = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}")
-        direct_caps = await probe_xml(f"/ISAPI/PTZCtrl/channels/{cam_key}/capabilities")
-        if direct_info is not None or direct_caps is not None:
-            result["ptz_direct_supported"] = True
+            result["ptz_proxy_ctrl_mode"] = "isapi"
             result["ptz_momentary_supported"] = True
-            result["ptz_continuous_supported"] = True
-            result["ptz_direct_momentary_supported"] = True
-            result["ptz_direct_continuous_supported"] = True
-            if not result["ptz_proxy_supported"]:
-                result["ptz_control_method"] = "direct"
-                result["ptz_capability_mode"] = "isapi"
-                result["ptz_implementation"] = "ptzctrl"
+            result["ptz_proxy_momentary_supported"] = True
+            result["zoom_supported"] = True
+            result["ptz_unsupported_reason"] = None
+        else:
+            result["ptz_unsupported_reason"] = "ptz_proxy_endpoint_unavailable"
 
         focus_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/focus")
         iris_caps = await probe_xml(f"/ISAPI/System/Video/inputs/channels/{cam_key}/iris")
         result["focus_supported"] = focus_caps is not None
         result["iris_supported"] = iris_caps is not None
-        result["zoom_supported"] = result["ptz_direct_supported"] or result["ptz_proxy_supported"]
 
-        if result["ptz_direct_supported"] or result["ptz_proxy_supported"]:
-            result["ptz_supported"] = True
-            result["ptz_unsupported_reason"] = None
-        else:
-            result["ptz_unsupported_reason"] = "ptz_endpoint_unavailable"
-
-        result["ptz_control_path_configured"] = self._get_ptz_control_preference()
-        result["ptz_control_path_active"] = self._resolve_ptz_transport(result)
+        result["ptz_control_path_configured"] = "proxy"
+        result["ptz_control_path_active"] = "proxy" if result["ptz_supported"] else "none"
 
         self._ptz_capability_cache[cam_key] = dict(result)
         return dict(result)
@@ -514,19 +459,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             )
         return capabilities
 
-    async def _sleep_and_stop_ptz(self, cam_id: str, duration: int) -> None:
-        if duration <= 0:
-            return
-        await asyncio.sleep(max(0.05, duration / 1000.0))
-        stop_xml = '<?xml version="1.0" encoding="UTF-8"?><PTZData><pan>0</pan><tilt>0</tilt><zoom>0</zoom></PTZData>'
-        try:
-            capabilities = await self._ensure_ptz_supported(str(cam_id))
-            transport = self._resolve_ptz_transport(capabilities)
-            if transport != "none":
-                await self._send_put_xml(self._build_ptz_endpoint(cam_id, transport, "continuous"), stop_xml)
-        except Exception:
-            pass
-
     async def ptz(
         self,
         cam_id: str,
@@ -538,10 +470,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         speed: int = 50,
     ) -> None:
         cam_key = str(cam_id)
-        capabilities = await self._ensure_ptz_supported(cam_key)
-        transport = self._resolve_ptz_transport(capabilities)
-        if transport == "none":
-            raise UpdateFailed(f"PTZ is not supported for camera {cam_key}")
+        await self._ensure_ptz_supported(cam_key)
 
         pan = int(pan or 0)
         tilt = int(tilt or 0)
@@ -553,20 +482,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         pan = max(-100, min(100, pan))
         tilt = max(-100, min(100, tilt))
         duration = max(0, int(duration or 0))
-        continuous_requested = bool(continuous)
-        stop_requested = bool(stop or (continuous_requested and pan == 0 and tilt == 0))
 
-        continuous_supported = bool(
-            capabilities.get(f"ptz_{transport}_continuous_supported")
-            or capabilities.get("ptz_continuous_supported")
-        )
-        momentary_supported = bool(
-            capabilities.get(f"ptz_{transport}_momentary_supported")
-            or capabilities.get("ptz_momentary_supported")
-        )
-
-        mode = "momentary"
-        endpoint = self._build_ptz_endpoint(cam_key, transport, "momentary")
+        endpoint = self._build_ptz_endpoint(cam_key, "momentary")
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<PTZData>'
@@ -577,58 +494,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             '</PTZData>'
         )
 
-        if stop_requested:
-            mode = "continuous_stop"
-            endpoint = self._build_ptz_endpoint(cam_key, transport, "continuous")
-            body = (
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<PTZData><pan>0</pan><tilt>0</tilt><zoom>0</zoom></PTZData>'
-            )
-        elif continuous_requested and continuous_supported:
-            mode = "continuous"
-            endpoint = self._build_ptz_endpoint(cam_key, transport, "continuous")
-            body = (
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<PTZData>'
-                f'<pan>{pan}</pan>'
-                f'<tilt>{tilt}</tilt>'
-                '<zoom>0</zoom>'
-                '</PTZData>'
-            )
-        elif not momentary_supported and continuous_supported:
-            mode = "continuous_fallback"
-            endpoint = self._build_ptz_endpoint(cam_key, transport, "continuous")
-            body = (
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<PTZData>'
-                f'<pan>{pan}</pan>'
-                f'<tilt>{tilt}</tilt>'
-                '<zoom>0</zoom>'
-                '</PTZData>'
-            )
-            if duration > 0:
-                await self._send_put_xml(endpoint, body)
-                await self._sleep_and_stop_ptz(cam_key, duration)
-                self._push_debug_event(
-                    category="ptz",
-                    event="ptz_move_sent",
-                    message=f"PTZ move sent for camera {cam_key}",
-                    camera_id=cam_key,
-                    context={
-                        "pan": pan,
-                        "tilt": tilt,
-                        "speed": speed,
-                        "duration": duration,
-                        "continuous_requested": continuous_requested,
-                        "stop_requested": stop_requested,
-                        "mode": mode,
-                        "ptz_control_path_configured": self._get_ptz_control_preference(),
-                        "ptz_control_path_active": transport,
-                        "endpoint": endpoint,
-                    },
-                )
-                return
-
         await self._send_put_xml(endpoint, body)
         self._push_debug_event(
             category="ptz",
@@ -638,12 +503,11 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             context={
                 "pan": pan,
                 "tilt": tilt,
+                "speed": speed,
                 "duration": duration,
-                "continuous_requested": continuous_requested,
-                "stop_requested": stop_requested,
-                "mode": mode,
-                "ptz_control_path_configured": self._get_ptz_control_preference(),
-                "ptz_control_path_active": transport,
+                "continuous_requested": bool(continuous),
+                "stop_requested": bool(stop),
+                "mode": "momentary",
                 "endpoint": endpoint,
             },
         )
@@ -654,7 +518,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         preset_id = max(1, int(preset))
         await self._request_text(
             "PUT",
-            f"/ISAPI/PTZCtrl/channels/{cam_key}/presets/{preset_id}/goto",
+            self._build_ptz_endpoint(cam_key, f"presets/{preset_id}/goto"),
             expected=(200, 201, 204),
             allow_empty=True,
         )
@@ -712,10 +576,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
 
     async def zoom(self, cam_id: str, direction: int = 1, speed: int = 50, duration: int = 500) -> None:
         cam_key = str(cam_id)
-        capabilities = await self._ensure_ptz_supported(cam_key)
-        transport = self._resolve_ptz_transport(capabilities)
-        if transport == "none":
-            raise UpdateFailed(f"PTZ is not supported for camera {cam_key}")
+        await self._ensure_ptz_supported(cam_key)
         speed = max(0, min(100, int(speed or 0)))
         direction_raw = int(direction or 0)
         direction = 0 if direction_raw == 0 else (1 if direction_raw > 0 else -1)
@@ -729,7 +590,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
-        endpoint = self._build_ptz_endpoint(cam_key, transport, "momentary")
+        endpoint = self._build_ptz_endpoint(cam_key, "momentary")
         await self._send_put_xml(endpoint, body)
         self._push_debug_event(
             category="ptz",
@@ -740,8 +601,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 "direction": direction,
                 "speed": speed,
                 "duration": duration,
-                "ptz_control_path_configured": self._get_ptz_control_preference(),
-                "ptz_control_path_active": transport,
                 "endpoint": endpoint,
             },
         )
@@ -1105,7 +964,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "video_input_channel_id": active_stream.get("video_input_channel_id"),
                     "ptz_supported": False,
                     "ptz_proxy_supported": False,
-                    "ptz_direct_supported": False,
                     "ptz_control_method": "none",
                     "ptz_capability_mode": "unknown",
                     "ptz_implementation": "none",
@@ -1114,8 +972,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "ptz_continuous_supported": False,
                     "ptz_proxy_momentary_supported": False,
                     "ptz_proxy_continuous_supported": False,
-                    "ptz_direct_momentary_supported": False,
-                    "ptz_direct_continuous_supported": False,
                     "ptz_unsupported_reason": None,
                 }
             )
@@ -1151,7 +1007,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "video_input_channel_id": None,
                     "ptz_supported": False,
                     "ptz_proxy_supported": False,
-                    "ptz_direct_supported": False,
                     "ptz_control_method": "none",
                     "ptz_capability_mode": "unknown",
                     "ptz_implementation": "none",
@@ -1160,8 +1015,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "ptz_continuous_supported": False,
                     "ptz_proxy_momentary_supported": False,
                     "ptz_proxy_continuous_supported": False,
-                    "ptz_direct_momentary_supported": False,
-                    "ptz_direct_continuous_supported": False,
                     "ptz_unsupported_reason": "no_stream_metadata",
                 }
             )
@@ -1183,7 +1036,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                         {
                             "ptz_supported": False,
                             "ptz_proxy_supported": False,
-                            "ptz_direct_supported": False,
                             "ptz_control_method": "none",
                             "ptz_capability_mode": "error",
                             "ptz_implementation": "none",
@@ -1192,8 +1044,6 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                             "ptz_continuous_supported": False,
                             "ptz_proxy_momentary_supported": False,
                             "ptz_proxy_continuous_supported": False,
-                            "ptz_direct_momentary_supported": False,
-                            "ptz_direct_continuous_supported": False,
                             "ptz_unsupported_reason": str(err),
                             "focus_supported": False,
                             "iris_supported": False,

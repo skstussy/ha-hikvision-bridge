@@ -1,6 +1,6 @@
 ptz:
   name: PTZ Move
-  description: Move the PTZ camera using momentary control.
+  description: Move the PTZ camera using PTZCtrlProxy momentary control through the recorder.
   fields:
     channel:
       name: Channel
@@ -123,7 +123,7 @@ ptz_return_to_center:
 
 zoom:
   name: Zoom
-  description: Zoom the selected PTZ camera in or out using momentary control.
+  description: Zoom the selected PTZ camera in or out using PTZCtrlProxy momentary control through the recorder.
   fields:
     channel:
       name: Channel
