@@ -527,15 +527,38 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         except Exception:
             pass
 
-    async def ptz(self, cam_id: str, pan: int = 0, tilt: int = 0, duration: int = 500) -> None:
+    async def ptz(
+        self,
+        cam_id: str,
+        pan: int = 0,
+        tilt: int = 0,
+        duration: int = 500,
+        continuous: bool = False,
+        stop: bool = False,
+    ) -> None:
         cam_key = str(cam_id)
         capabilities = await self._ensure_ptz_supported(cam_key)
         transport = self._resolve_ptz_transport(capabilities)
         if transport == "none":
             raise UpdateFailed(f"PTZ is not supported for camera {cam_key}")
+
         pan = max(-100, min(100, int(pan or 0)))
         tilt = max(-100, min(100, int(tilt or 0)))
         duration = max(0, int(duration or 0))
+        continuous_requested = bool(continuous)
+        stop_requested = bool(stop or (continuous_requested and pan == 0 and tilt == 0))
+
+        continuous_supported = bool(
+            capabilities.get(f"ptz_{transport}_continuous_supported")
+            or capabilities.get("ptz_continuous_supported")
+        )
+        momentary_supported = bool(
+            capabilities.get(f"ptz_{transport}_momentary_supported")
+            or capabilities.get("ptz_momentary_supported")
+        )
+
+        mode = "momentary"
+        endpoint = self._build_ptz_endpoint(cam_key, transport, "momentary")
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<PTZData>'
@@ -545,7 +568,58 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
-        endpoint = self._build_ptz_endpoint(cam_key, transport, "momentary")
+
+        if stop_requested:
+            mode = "continuous_stop"
+            endpoint = self._build_ptz_endpoint(cam_key, transport, "continuous")
+            body = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<PTZData><pan>0</pan><tilt>0</tilt><zoom>0</zoom></PTZData>'
+            )
+        elif continuous_requested and continuous_supported:
+            mode = "continuous"
+            endpoint = self._build_ptz_endpoint(cam_key, transport, "continuous")
+            body = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<PTZData>'
+                f'<pan>{pan}</pan>'
+                f'<tilt>{tilt}</tilt>'
+                '<zoom>0</zoom>'
+                '</PTZData>'
+            )
+        elif not momentary_supported and continuous_supported:
+            mode = "continuous_fallback"
+            endpoint = self._build_ptz_endpoint(cam_key, transport, "continuous")
+            body = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<PTZData>'
+                f'<pan>{pan}</pan>'
+                f'<tilt>{tilt}</tilt>'
+                '<zoom>0</zoom>'
+                '</PTZData>'
+            )
+            if duration > 0:
+                await self._send_put_xml(endpoint, body)
+                await self._sleep_and_stop_ptz(cam_key, duration)
+                self._push_debug_event(
+                    category="ptz",
+                    event="ptz_move_sent",
+                    message=f"PTZ move sent for camera {cam_key}",
+                    camera_id=cam_key,
+                    context={
+                        "pan": pan,
+                        "tilt": tilt,
+                        "duration": duration,
+                        "continuous_requested": continuous_requested,
+                        "stop_requested": stop_requested,
+                        "mode": mode,
+                        "ptz_control_path_configured": self._get_ptz_control_preference(),
+                        "ptz_control_path_active": transport,
+                        "endpoint": endpoint,
+                    },
+                )
+                return
+
         await self._send_put_xml(endpoint, body)
         self._push_debug_event(
             category="ptz",
@@ -556,6 +630,9 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 "pan": pan,
                 "tilt": tilt,
                 "duration": duration,
+                "continuous_requested": continuous_requested,
+                "stop_requested": stop_requested,
+                "mode": mode,
                 "ptz_control_path_configured": self._get_ptz_control_preference(),
                 "ptz_control_path_active": transport,
                 "endpoint": endpoint,

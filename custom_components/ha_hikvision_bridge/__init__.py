@@ -151,6 +151,8 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
             call.data.get("pan", 0),
             call.data.get("tilt", 0),
             call.data.get("duration", 500),
+            call.data.get("continuous", False),
+            call.data.get("stop", False),
         )
 
     async def preset_service(call: ServiceCall) -> None:
@@ -402,6 +404,8 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
                 vol.Optional("pan", default=0): vol.Coerce(int),
                 vol.Optional("tilt", default=0): vol.Coerce(int),
                 vol.Optional("duration", default=500): vol.Coerce(int),
+                vol.Optional("continuous", default=False): cv.boolean,
+                vol.Optional("stop", default=False): cv.boolean,
                 vol.Optional("entry_id"): cv.string,
             }
         ),
@@ -428,6 +432,8 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
                 vol.Optional("direction", default=1): vol.Coerce(int),
                 vol.Optional("speed", default=60): vol.Coerce(int),
                 vol.Optional("duration", default=500): vol.Coerce(int),
+                vol.Optional("continuous", default=False): cv.boolean,
+                vol.Optional("stop", default=False): cv.boolean,
                 vol.Optional("entry_id"): cv.string,
             }
         ),
@@ -442,6 +448,8 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
                 vol.Optional("direction", default=1): vol.Coerce(int),
                 vol.Optional("speed", default=60): vol.Coerce(int),
                 vol.Optional("duration", default=500): vol.Coerce(int),
+                vol.Optional("continuous", default=False): cv.boolean,
+                vol.Optional("stop", default=False): cv.boolean,
                 vol.Optional("entry_id"): cv.string,
             }
         ),
@@ -456,6 +464,8 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
                 vol.Optional("direction", default=1): vol.Coerce(int),
                 vol.Optional("speed", default=50): vol.Coerce(int),
                 vol.Optional("duration", default=500): vol.Coerce(int),
+                vol.Optional("continuous", default=False): cv.boolean,
+                vol.Optional("stop", default=False): cv.boolean,
                 vol.Optional("entry_id"): cv.string,
             }
         ),
