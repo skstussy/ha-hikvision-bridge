@@ -119,8 +119,17 @@ def _candidate_playback_track_ids(cam: dict, active_stream: dict, profiles: dict
     values: list[str] = []
     seen: set[str] = set()
 
+    def extract_stream_value(value) -> str:
+        if isinstance(value, dict):
+            for key in ("stream_id", "id", "track_id"):
+                candidate = value.get(key)
+                if candidate:
+                    return str(candidate).strip()
+            return ""
+        return str(value or "").strip()
+
     def add_main_recording_track(value) -> None:
-        raw = str(value or "").strip()
+        raw = extract_stream_value(value)
         if not raw:
             return
 
@@ -1143,13 +1152,9 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Unknown camera {cam_id}")
 
         stream_profile_map = target_camera.get("stream_profile_map") or {}
-        active_stream = choose_stream_by_profile(
-            stream_profile_map,
-            target_camera.get("stream_profile"),
-        )
         track_ids = _candidate_playback_track_ids(
             target_camera,
-            active_stream,
+            {},
             stream_profile_map,
         )
 
