@@ -605,17 +605,70 @@ async def _register_stream_service(hass: HomeAssistant, service_domain: str) -> 
             entity = entities.get(entity_id)
             if entity is None:
                 continue
+
             playback_result = await coordinator.search_playback_uri(entity._cam_id, timestamp)
-            if playback_result:
+            playback_uri = None
+            clip_start_time = None
+            clip_end_time = None
+
+            if isinstance(playback_result, str):
+                playback_uri = playback_result
+            elif isinstance(playback_result, dict):
+                playback_uri = playback_result.get("playback_uri")
+                clip_start_time = playback_result.get("playback_clip_start_time") or playback_result.get("clip_start_time")
+                clip_end_time = playback_result.get("playback_clip_end_time") or playback_result.get("clip_end_time")
+
+                if not playback_uri:
+                    matches = playback_result.get("matches")
+                    if isinstance(matches, list) and matches:
+                        first_match = matches[0]
+                        if isinstance(first_match, str):
+                            playback_uri = first_match
+                        elif isinstance(first_match, dict):
+                            playback_uri = first_match.get("playback_uri")
+                            clip_start_time = (
+                                clip_start_time
+                                or first_match.get("playback_clip_start_time")
+                                or first_match.get("clip_start_time")
+                                or first_match.get("start_time")
+                            )
+                            clip_end_time = (
+                                clip_end_time
+                                or first_match.get("playback_clip_end_time")
+                                or first_match.get("clip_end_time")
+                                or first_match.get("end_time")
+                            )
+            elif isinstance(playback_result, list) and playback_result:
+                first_match = playback_result[0]
+                if isinstance(first_match, str):
+                    playback_uri = first_match
+                elif isinstance(first_match, dict):
+                    playback_uri = first_match.get("playback_uri")
+                    clip_start_time = (
+                        first_match.get("playback_clip_start_time")
+                        or first_match.get("clip_start_time")
+                        or first_match.get("start_time")
+                    )
+                    clip_end_time = (
+                        first_match.get("playback_clip_end_time")
+                        or first_match.get("clip_end_time")
+                        or first_match.get("end_time")
+                    )
+
+            if playback_uri:
                 entity.start_playback(
-                    playback_result.get("playback_uri"),
+                    playback_uri,
                     requested_time=timestamp,
                     error=None,
-                    clip_start_time=playback_result.get("playback_clip_start_time"),
-                    clip_end_time=playback_result.get("playback_clip_end_time"),
+                    clip_start_time=clip_start_time,
+                    clip_end_time=clip_end_time,
                 )
             else:
-                entity.start_playback(None, requested_time=timestamp, error="No recording found for requested time")
+                entity.start_playback(
+                    None,
+                    requested_time=timestamp,
+                    error="No recording found for requested time",
+                )
             break
 
     hass.services.async_register(
