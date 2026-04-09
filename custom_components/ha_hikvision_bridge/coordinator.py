@@ -535,6 +535,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         duration: int = 500,
         continuous: bool = False,
         stop: bool = False,
+        speed: int = 50,
     ) -> None:
         cam_key = str(cam_id)
         capabilities = await self._ensure_ptz_supported(cam_key)
@@ -542,8 +543,15 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         if transport == "none":
             raise UpdateFailed(f"PTZ is not supported for camera {cam_key}")
 
-        pan = max(-100, min(100, int(pan or 0)))
-        tilt = max(-100, min(100, int(tilt or 0)))
+        pan = int(pan or 0)
+        tilt = int(tilt or 0)
+        speed = max(1, min(100, int(speed or 50)))
+        if pan != 0 and abs(pan) <= 1:
+            pan = speed if pan > 0 else -speed
+        if tilt != 0 and abs(tilt) <= 1:
+            tilt = speed if tilt > 0 else -speed
+        pan = max(-100, min(100, pan))
+        tilt = max(-100, min(100, tilt))
         duration = max(0, int(duration or 0))
         continuous_requested = bool(continuous)
         stop_requested = bool(stop or (continuous_requested and pan == 0 and tilt == 0))
@@ -609,6 +617,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     context={
                         "pan": pan,
                         "tilt": tilt,
+                        "speed": speed,
                         "duration": duration,
                         "continuous_requested": continuous_requested,
                         "stop_requested": stop_requested,
