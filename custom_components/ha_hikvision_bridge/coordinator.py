@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta, datetime
-from urllib.parse import quote
 from yarl import URL
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -1161,27 +1160,37 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         if not track_ids:
             raise UpdateFailed(f"No playback track ids available for camera {cam_id}")
 
-        search_start = _format_search_timestamp(start)
-        search_end = _format_search_timestamp(end)
+        requested_dt = _parse_hikvision_dt(start) or _parse_hikvision_dt(end) or dt_util.utcnow()
+        explicit_start_dt = _parse_hikvision_dt(start)
+        explicit_end_dt = _parse_hikvision_dt(end)
+
+        if explicit_start_dt is not None and explicit_end_dt is not None:
+            search_start_dt = explicit_start_dt
+            search_end_dt = explicit_end_dt
+        else:
+            search_start_dt = requested_dt - timedelta(seconds=30)
+            search_end_dt = requested_dt + timedelta(seconds=30)
+
+        search_start = dt_util.as_utc(search_start_dt).strftime("%Y-%m-%dT%H:%M:%SZ")
+        search_end = dt_util.as_utc(search_end_dt).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         track_filter_xml = "".join(
-            f"<trackID>{quote(track_id)}</trackID>" for track_id in track_ids
+            f"<trackID>{track_id}</trackID>" for track_id in track_ids
         )
 
         payload = (
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-            "<CMSearchDescription>"
-            "<searchID>1</searchID>"
-            "<trackList>"
+            "<CMSearchDescription version=\"2.0\" xmlns=\"http://www.isapi.org/ver20/XMLSchema\">"
+            "<searchID>11111111-1111-1111-1111-111111111111</searchID>"
+            "<trackIDList>"
             f"{track_filter_xml}"
-            "</trackList>"
+            "</trackIDList>"
             "<timeSpanList><timeSpan>"
             f"<startTime>{search_start}</startTime>"
             f"<endTime>{search_end}</endTime>"
             "</timeSpan></timeSpanList>"
             "<maxResults>40</maxResults>"
-            "<searchResultPostion>0</searchResultPostion>"
-            "<metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList>"
+            "<searchResultPosition>0</searchResultPosition>"
             "</CMSearchDescription>"
         )
 
@@ -1193,14 +1202,21 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         )
 
         matches = []
-        for item in search_xml.findall(".//searchMatchItem"):
+        for item in search_xml.iter():
+            tag = str(getattr(item, "tag", ""))
+            if tag.split("}", 1)[-1] != "searchMatchItem":
+                continue
             media_segment = safe_find_text(item, "mediaSegmentDescriptor")
             playback_uri = safe_find_text(item, "playbackURI")
+            clip_start_time = safe_find_text(item, "startTime")
+            clip_end_time = safe_find_text(item, "endTime")
             if playback_uri:
                 matches.append(
                     {
                         "media_segment_descriptor": media_segment,
                         "playback_uri": playback_uri,
+                        "clip_start_time": clip_start_time,
+                        "clip_end_time": clip_end_time,
                     }
                 )
 
