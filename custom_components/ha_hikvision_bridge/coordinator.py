@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta, datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from yarl import URL
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -113,14 +114,12 @@ def _candidate_playback_track_ids(cam: dict, active_stream: dict, profiles: dict
     live mode may be on a sub-stream while recordings still exist only on the
     channel's main stream track.
     """
-    del active_stream  # Playback search must not depend on live stream selection.
-
     values: list[str] = []
     seen: set[str] = set()
 
     def extract_stream_value(value) -> str:
         if isinstance(value, dict):
-            for key in ("stream_id", "id", "track_id"):
+            for key in ("channel", "stream_id", "id", "track_id"):
                 candidate = value.get(key)
                 if candidate:
                     return str(candidate).strip()
@@ -141,17 +140,60 @@ def _candidate_playback_track_ids(cam: dict, active_stream: dict, profiles: dict
         except ValueError:
             return
 
+        if channel_num <= 0:
+            return
+        if channel_num >= 100:
+            channel_num = channel_num // 100
+
         track_id = f"{channel_num}01"
         if track_id not in seen:
             seen.add(track_id)
             values.append(track_id)
 
-    add_main_recording_track(cam.get("id"))
-
-    for profile in ("main", "mainstream"):
-        add_main_recording_track(profiles.get(profile))
+    for value in (
+        cam.get("channel"),
+        cam.get("id"),
+        active_stream.get("channel"),
+        (profiles.get("main") or {}).get("channel") if isinstance(profiles.get("main"), dict) else None,
+        (profiles.get("sub") or {}).get("channel") if isinstance(profiles.get("sub"), dict) else None,
+        active_stream.get("stream_id"),
+        profiles.get("main"),
+        profiles.get("mainstream"),
+        profiles.get("sub"),
+        cam.get("stream_id"),
+    ):
+        add_main_recording_track(value)
 
     return values
+
+
+def _inject_rtsp_playback_window(playback_uri: str | None, requested_time: str | None, end_time: str | None = None) -> str | None:
+    """Normalize Hikvision playback RTSP URIs while preserving seek intent."""
+    if not playback_uri:
+        return playback_uri
+
+    try:
+        parts = urlsplit(playback_uri)
+        query_items = parse_qsl(parts.query, keep_blank_values=True)
+        query = dict(query_items)
+
+        path = parts.path[:-1] if parts.path.endswith("/") else parts.path
+
+        start_stamp = _format_rtsp_playback_timestamp(requested_time or query.get("starttime"))
+        if start_stamp:
+            query["starttime"] = start_stamp
+
+        if "endtime" in query:
+            end_stamp = _format_rtsp_playback_timestamp(end_time or query.get("endtime"))
+            if end_stamp:
+                query["endtime"] = end_stamp
+            else:
+                query.pop("endtime", None)
+
+        return urlunsplit((parts.scheme, parts.netloc, path, urlencode(query), parts.fragment))
+    except Exception:
+        return playback_uri
+
 
 
 class HikvisionCoordinator(DataUpdateCoordinator):
@@ -726,6 +768,48 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         await self.audio.async_stop_native_stream(str(cam_id))
         self.async_update_listeners()
 
+    def _mask_headers(self, headers: dict | None) -> dict:
+        masked = dict(headers or {})
+        if "Authorization" in masked:
+            masked["Authorization"] = "<redacted>"
+        return masked
+
+    def _store_playback_debug(self, cam_id: str, entry: dict) -> None:
+        key = str(cam_id)
+        history = list(self._playback_debug_by_camera.get(key, []))
+        history.append(entry)
+        self._playback_debug_by_camera[key] = history[-8:]
+        self.async_update_listeners()
+
+    def _camera_by_id(self, cam_id: str) -> dict:
+        return next(
+            (
+                cam
+                for cam in self.data.get("cameras", [])
+                if str(cam.get("id")) == str(cam_id)
+            ),
+            {},
+        )
+
+    def _parse_playback_matches(self, search_xml: ET.Element) -> list[dict]:
+        matches: list[dict] = []
+        for item in search_xml.iter():
+            tag = str(getattr(item, "tag", ""))
+            if tag.split("}", 1)[-1] != "searchMatchItem":
+                continue
+            playback_uri = safe_find_text(item, "playbackURI")
+            if not playback_uri:
+                continue
+            matches.append(
+                {
+                    "media_segment_descriptor": safe_find_text(item, "mediaSegmentDescriptor"),
+                    "playback_uri": playback_uri,
+                    "start_time": safe_find_text(item, "startTime"),
+                    "end_time": safe_find_text(item, "endTime"),
+                }
+            )
+        return matches
+
     def get_playback_debug(self, cam_id: str) -> list[dict]:
         return list(self._playback_debug_by_camera.get(str(cam_id), []))
 
@@ -1143,92 +1227,197 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         start: str | None = None,
         end: str | None = None,
     ) -> dict:
-        target_camera = next(
-            (cam for cam in self.data.get("cameras", []) if str(cam.get("id")) == str(cam_id)),
-            None,
-        )
-        if target_camera is None:
+        target_camera = self._camera_by_id(cam_id)
+        if not target_camera:
             raise UpdateFailed(f"Unknown camera {cam_id}")
 
-        stream_profile_map = target_camera.get("stream_profile_map") or {}
+        active_stream = self.get_active_stream(cam_id) or {}
+        stream_profile_map = build_stream_profile_map(
+            list(self.data.get("streams", {}).get(str(cam_id), []))
+        )
+        if not stream_profile_map:
+            stream_profile_map = target_camera.get("stream_profile_map") or {}
+
         track_ids = _candidate_playback_track_ids(
             target_camera,
-            {},
+            active_stream,
             stream_profile_map,
         )
 
+        requested_time = start or end
         if not track_ids:
+            self._store_playback_debug(
+                cam_id,
+                {
+                    "ok": False,
+                    "reason": "No candidate track IDs were available for playback search.",
+                    "requested_time": requested_time,
+                },
+            )
             raise UpdateFailed(f"No playback track ids available for camera {cam_id}")
 
-        requested_dt = _parse_hikvision_dt(start) or _parse_hikvision_dt(end) or dt_util.utcnow()
+        requested_dt = _parse_hikvision_dt(requested_time)
         explicit_start_dt = _parse_hikvision_dt(start)
         explicit_end_dt = _parse_hikvision_dt(end)
 
         if explicit_start_dt is not None and explicit_end_dt is not None:
-            search_start_dt = explicit_start_dt
-            search_end_dt = explicit_end_dt
+            search_start = _format_search_timestamp(start) or dt_util.as_utc(explicit_start_dt).strftime("%Y-%m-%dT%H:%M:%SZ")
+            search_end = _format_search_timestamp(end) or dt_util.as_utc(explicit_end_dt).strftime("%Y-%m-%dT%H:%M:%SZ")
+        elif requested_dt is not None:
+            search_start = _format_search_timestamp((requested_dt - timedelta(hours=12)).isoformat()) or dt_util.as_utc(requested_dt - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            search_end = _format_search_timestamp((requested_dt + timedelta(hours=12)).isoformat()) or dt_util.as_utc(requested_dt + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
         else:
-            search_start_dt = requested_dt - timedelta(seconds=30)
-            search_end_dt = requested_dt + timedelta(seconds=30)
+            fallback_dt = dt_util.utcnow()
+            search_start = _format_search_timestamp((fallback_dt - timedelta(hours=12)).isoformat()) or dt_util.as_utc(fallback_dt - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            search_end = _format_search_timestamp((fallback_dt + timedelta(hours=12)).isoformat()) or dt_util.as_utc(fallback_dt + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        search_start = dt_util.as_utc(search_start_dt).strftime("%Y-%m-%dT%H:%M:%SZ")
-        search_end = dt_util.as_utc(search_end_dt).strftime("%Y-%m-%dT%H:%M:%SZ")
+        request_headers = {"Content-Type": "application/xml"}
 
-        track_filter_xml = "".join(
-            f"<trackID>{track_id}</trackID>" for track_id in track_ids
-        )
-
-        payload = (
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-            "<CMSearchDescription version=\"2.0\" xmlns=\"http://www.isapi.org/ver20/XMLSchema\">"
-            "<searchID>11111111-1111-1111-1111-111111111111</searchID>"
-            "<trackIDList>"
-            f"{track_filter_xml}"
-            "</trackIDList>"
-            "<timeSpanList><timeSpan>"
-            f"<startTime>{search_start}</startTime>"
-            f"<endTime>{search_end}</endTime>"
-            "</timeSpan></timeSpanList>"
-            "<maxResults>40</maxResults>"
-            "<searchResultPosition>0</searchResultPosition>"
-            "</CMSearchDescription>"
-        )
-
-        search_xml = await self._request_xml(
-            "POST",
-            "/ISAPI/ContentMgmt/search",
-            body=payload,
-            headers={"Content-Type": "application/xml"},
-        )
-
-        matches = []
-        for item in search_xml.iter():
-            tag = str(getattr(item, "tag", ""))
-            if tag.split("}", 1)[-1] != "searchMatchItem":
-                continue
-            media_segment = safe_find_text(item, "mediaSegmentDescriptor")
-            playback_uri = safe_find_text(item, "playbackURI")
-            clip_start_time = safe_find_text(item, "startTime")
-            clip_end_time = safe_find_text(item, "endTime")
-            if playback_uri:
-                matches.append(
-                    {
-                        "media_segment_descriptor": media_segment,
-                        "playback_uri": playback_uri,
-                        "clip_start_time": clip_start_time,
-                        "clip_end_time": clip_end_time,
-                    }
+        for track_id in track_ids:
+            payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+<CMSearchDescription version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <searchID>11111111-1111-1111-1111-111111111111</searchID>
+  <trackIDList>
+    <trackID>{track_id}</trackID>
+  </trackIDList>
+  <timeSpanList>
+    <timeSpan>
+      <startTime>{search_start}</startTime>
+      <endTime>{search_end}</endTime>
+    </timeSpan>
+  </timeSpanList>
+  <maxResults>128</maxResults>
+  <searchResultPosition>0</searchResultPosition>
+</CMSearchDescription>"""
+            try:
+                response_text = await self._request_text(
+                    "POST",
+                    "/ISAPI/ContentMgmt/search",
+                    body=payload,
+                    headers=request_headers,
+                    expected=(200, 201),
                 )
+                status = 200
+            except HikvisionEndpointError as err:
+                self._store_playback_debug(
+                    cam_id,
+                    {
+                        "ok": False,
+                        "track_id": track_id,
+                        "requested_time": requested_time,
+                        "search_start": search_start,
+                        "search_end": search_end,
+                        "request": {
+                            "method": "POST",
+                            "path": "/ISAPI/ContentMgmt/search",
+                            "headers": self._mask_headers(request_headers),
+                            "body": payload,
+                        },
+                        "response": {
+                            "status": err.status,
+                            "body": err.body or "",
+                        },
+                        "error": str(err),
+                    },
+                )
+                continue
 
-        result = {
+            debug_entry = {
+                "ok": True,
+                "track_id": track_id,
+                "requested_time": requested_time,
+                "search_start": search_start,
+                "search_end": search_end,
+                "request": {
+                    "method": "POST",
+                    "path": "/ISAPI/ContentMgmt/search",
+                    "headers": self._mask_headers(request_headers),
+                    "body": payload,
+                },
+                "response": {
+                    "status": status,
+                    "body": response_text[:4000],
+                },
+            }
+
+            try:
+                result_xml = ET.fromstring(response_text)
+            except ET.ParseError:
+                debug_entry["ok"] = False
+                debug_entry["reason"] = "Playback search response was not valid XML."
+                self._store_playback_debug(cam_id, debug_entry)
+                continue
+
+            matches = self._parse_playback_matches(result_xml)
+            debug_entry["match_count"] = len(matches)
+            if not matches:
+                debug_entry["ok"] = False
+                debug_entry["reason"] = "Playback search returned no matching recordings."
+                self._store_playback_debug(cam_id, debug_entry)
+                continue
+
+            best_match = matches[0]
+            if requested_dt is not None:
+                def score(item: dict) -> tuple[int, float]:
+                    start_dt = _parse_hikvision_dt(item.get("start_time"))
+                    end_dt = _parse_hikvision_dt(item.get("end_time"))
+                    contains_requested = int(
+                        start_dt is not None
+                        and end_dt is not None
+                        and start_dt <= requested_dt <= end_dt
+                    )
+                    if contains_requested:
+                        span = (end_dt - start_dt).total_seconds()
+                        return (0, span)
+                    if start_dt is not None:
+                        distance = abs((requested_dt - start_dt).total_seconds())
+                        return (1, distance)
+                    return (2, float("inf"))
+
+                best_match = sorted(matches, key=score)[0]
+
+            playback_uri = best_match.get("playback_uri")
+            clip_start = best_match.get("start_time") or requested_time
+            clip_end = best_match.get("end_time")
+            adjusted_uri = _inject_rtsp_playback_window(playback_uri, requested_time, clip_end)
+            authenticated_uri = inject_rtsp_credentials(
+                adjusted_uri or playback_uri,
+                self.username,
+                self.password,
+                self.rtsp_port,
+            )
+
+            debug_entry["selected_match"] = {
+                "start_time": best_match.get("start_time"),
+                "end_time": best_match.get("end_time"),
+                "playback_uri": authenticated_uri,
+            }
+            self._store_playback_debug(cam_id, debug_entry)
+
+            return {
+                "camera_id": str(cam_id),
+                "playback_uri": authenticated_uri,
+                "playback_clip_start_time": clip_start,
+                "playback_clip_end_time": clip_end,
+                "playback_requested_time": requested_time,
+                "track_id": track_id,
+                "matches": matches,
+                "match_count": len(matches),
+            }
+
+        self._store_playback_debug(
+            cam_id,
+            {
+                "ok": False,
+                "requested_time": requested_time,
+                "reason": "Playback search completed but no usable recording URI was found.",
+            },
+        )
+        return {
             "camera_id": str(cam_id),
-            "matches": matches,
-            "match_count": len(matches),
+            "matches": [],
+            "match_count": 0,
         }
-
-        self._playback_debug_by_camera[str(cam_id)] = matches
-        self.async_update_listeners()
-        return result
 
     async def async_playback_stop(self, cam_id: str) -> None:
         self._playback_debug_by_camera.pop(str(cam_id), None)
