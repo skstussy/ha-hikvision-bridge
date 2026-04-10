@@ -28,8 +28,14 @@ from .const import (
     CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
     DEFAULT_RTSP_PORT,
+    DEFAULT_STREAM_MODE,
     DEFAULT_STREAM_PROFILE,
     DOMAIN,
+    STREAM_MODE_RTSP,
+    STREAM_MODE_RTSP_DIRECT,
+    STREAM_MODE_SNAPSHOT,
+    STREAM_MODE_WEBRTC,
+    STREAM_MODE_WEBRTC_DIRECT,
 )
 from .digest import DigestAuth
 from .helpers import (
@@ -387,32 +393,71 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         """Compatibility wrapper for entity/service callers expecting a sync API."""
         self.hass.async_create_task(self.async_set_stream_profile(cam_id, profile))
 
+    def _find_camera_entity(self, cam_id: str):
+        cam_key = str(cam_id)
+        for entity in getattr(self, "entities", {}).values():
+            if str(getattr(entity, "_cam_id", "")) == cam_key:
+                return entity
+        return None
+
+    def _refresh_digest_from_header(self, header: str | None = None) -> None:
+        self.digest.reset()
+        if header and "digest" in header.lower():
+            try:
+                self.digest.parse(header)
+            except Exception:
+                self.digest.reset()
+
+    def _normalize_stream_mode(self, mode: str | None) -> str:
+        value = str(mode or DEFAULT_STREAM_MODE).strip().lower()
+        allowed = {
+            STREAM_MODE_WEBRTC,
+            STREAM_MODE_WEBRTC_DIRECT,
+            STREAM_MODE_RTSP,
+            STREAM_MODE_RTSP_DIRECT,
+            STREAM_MODE_SNAPSHOT,
+        }
+        return value if value in allowed else DEFAULT_STREAM_MODE
+
     async def snapshot_image(self, cam_id: str) -> bytes | None:
         """Fetch a JPEG snapshot for a camera channel."""
         camera = self.get_camera(cam_id)
         stream_id = camera.get("stream_id") or f"{cam_id}01"
         path = f"/ISAPI/Streaming/channels/{stream_id}/picture"
         url = self.url(path)
-        auth_header = await self.digest.async_get_authorization(
-            self.session,
-            "GET",
-            url,
-            verify_ssl=self.verify_ssl,
+
+        for attempt in range(2):
+            auth_header = await self.digest.async_get_authorization(
+                self.session,
+                "GET",
+                url,
+                verify_ssl=self.verify_ssl,
+            )
+            async with self.session.get(
+                url,
+                headers={"Authorization": auth_header},
+                ssl=self.verify_ssl,
+            ) as resp:
+                if resp.status == 401 and attempt == 0:
+                    self._refresh_digest_from_header(resp.headers.get("WWW-Authenticate"))
+                    continue
+                if resp.status != 200:
+                    raise HikvisionEndpointError(
+                        method="GET",
+                        path=path,
+                        status=resp.status,
+                        body=(await resp.text())[:1000],
+                        classification="http_error",
+                    )
+                return await resp.read()
+
+        raise HikvisionEndpointError(
+            method="GET",
+            path=path,
+            status=401,
+            classification="http_error",
+            detail="authorization failed after refresh",
         )
-        async with self.session.get(
-            url,
-            headers={"Authorization": auth_header},
-            ssl=self.verify_ssl,
-        ) as resp:
-            if resp.status != 200:
-                raise HikvisionEndpointError(
-                    method="GET",
-                    path=path,
-                    status=resp.status,
-                    body=(await resp.text())[:1000],
-                    classification="http_error",
-                )
-            return await resp.read()
 
     async def _send_put_xml(
         self,
@@ -460,6 +505,28 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         camera = self.get_camera(cam_key)
         if not camera or not camera.get("online", True):
             result["ptz_unsupported_reason"] = "camera_offline"
+            self._ptz_capability_cache[cam_key] = dict(result)
+            return dict(result)
+
+        if camera.get("ptz_supported") is True and camera.get("ptz_control_method") == "proxy":
+            result.update(
+                {
+                    "ptz_supported": True,
+                    "ptz_proxy_supported": bool(camera.get("ptz_proxy_supported", True)),
+                    "ptz_control_method": str(camera.get("ptz_control_method") or "proxy"),
+                    "ptz_capability_mode": str(camera.get("ptz_capability_mode") or "momentary"),
+                    "ptz_implementation": str(camera.get("ptz_implementation") or "ptzctrlproxy"),
+                    "ptz_proxy_ctrl_mode": camera.get("ptz_proxy_ctrl_mode") or "isapi",
+                    "ptz_momentary_supported": bool(camera.get("ptz_momentary_supported", True)),
+                    "ptz_continuous_supported": bool(camera.get("ptz_continuous_supported", False)),
+                    "ptz_proxy_momentary_supported": bool(camera.get("ptz_proxy_momentary_supported", True)),
+                    "ptz_proxy_continuous_supported": bool(camera.get("ptz_proxy_continuous_supported", False)),
+                    "ptz_unsupported_reason": None,
+                    "focus_supported": bool(camera.get("focus_supported", False)),
+                    "iris_supported": bool(camera.get("iris_supported", False)),
+                    "zoom_supported": bool(camera.get("zoom_supported", True)),
+                }
+            )
             self._ptz_capability_cache[cam_key] = dict(result)
             return dict(result)
 
@@ -863,62 +930,86 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         allow_empty: bool = False,
     ) -> str:
         url = self.url(path)
-        try:
-            auth_header = await self.digest.async_get_authorization(
-                self.session, method, url, body=body, verify_ssl=self.verify_ssl
-            )
-        except Exception as err:
-            raise HikvisionEndpointError(
-                method=method,
-                path=path,
-                classification="auth_error",
-                detail=str(err),
-            ) from err
-
         req_headers = dict(headers or {})
-        req_headers["Authorization"] = auth_header
+        last_error: HikvisionEndpointError | None = None
 
-        try:
-            async with self.session.request(
-                method,
-                url,
-                data=body,
-                headers=req_headers,
-                ssl=self.verify_ssl,
-            ) as resp:
-                text = await resp.text()
-                if resp.status not in expected:
-                    raise HikvisionEndpointError(
-                        method=method,
-                        path=path,
-                        status=resp.status,
-                        body=text[:1000],
-                        classification="http_error",
-                    )
-                if not allow_empty and not text.strip():
-                    raise HikvisionEndpointError(
-                        method=method,
-                        path=path,
-                        status=resp.status,
-                        body=text[:1000],
-                        classification="empty_response",
-                    )
-                return text
-        except ClientResponseError as err:
-            raise HikvisionEndpointError(
-                method=method,
-                path=path,
-                status=err.status,
-                classification="client_response_error",
-                detail=str(err),
-            ) from err
-        except ClientError as err:
-            raise HikvisionEndpointError(
-                method=method,
-                path=path,
-                classification="client_error",
-                detail=str(err),
-            ) from err
+        for attempt in range(2):
+            try:
+                auth_header = await self.digest.async_get_authorization(
+                    self.session, method, url, body=body, verify_ssl=self.verify_ssl
+                )
+            except Exception as err:
+                raise HikvisionEndpointError(
+                    method=method,
+                    path=path,
+                    classification="auth_error",
+                    detail=str(err),
+                ) from err
+
+            request_headers = dict(req_headers)
+            request_headers["Authorization"] = auth_header
+
+            try:
+                async with self.session.request(
+                    method,
+                    url,
+                    data=body,
+                    headers=request_headers,
+                    ssl=self.verify_ssl,
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status == 401 and attempt == 0:
+                        self._refresh_digest_from_header(resp.headers.get("WWW-Authenticate"))
+                        self._push_debug_event(
+                            category="backend",
+                            event="auth_challenge_refreshed",
+                            message=f"Refreshing digest challenge for {method} {path}",
+                            camera_id=None,
+                            context={"method": method, "path": path},
+                        )
+                        continue
+                    if resp.status not in expected:
+                        raise HikvisionEndpointError(
+                            method=method,
+                            path=path,
+                            status=resp.status,
+                            body=text[:1000],
+                            classification="http_error",
+                        )
+                    if not allow_empty and not text.strip():
+                        raise HikvisionEndpointError(
+                            method=method,
+                            path=path,
+                            status=resp.status,
+                            body=text[:1000],
+                            classification="empty_response",
+                        )
+                    return text
+            except ClientResponseError as err:
+                last_error = HikvisionEndpointError(
+                    method=method,
+                    path=path,
+                    status=err.status,
+                    classification="client_response_error",
+                    detail=str(err),
+                )
+            except ClientError as err:
+                last_error = HikvisionEndpointError(
+                    method=method,
+                    path=path,
+                    classification="client_error",
+                    detail=str(err),
+                )
+            if last_error is not None:
+                raise last_error
+
+        raise HikvisionEndpointError(
+            method=method,
+            path=path,
+            status=401,
+            classification="http_error",
+            detail="authorization failed after refresh",
+        )
 
     async def _request_xml(
         self,
@@ -1215,11 +1306,31 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             self._alarm_stream_task = None
 
     async def async_set_stream_profile(self, cam_id: str, profile: str) -> None:
-        self._stream_profile_by_camera[str(cam_id)] = normalize_stream_profile(profile)
+        cam_key = str(cam_id)
+        normalized = normalize_stream_profile(profile)
+        self._stream_profile_by_camera[cam_key] = normalized
+        camera = self.get_camera(cam_key)
+        if camera:
+            camera["stream_profile"] = normalized
+            camera["stream_profile_requested"] = normalized
+            profile_map = camera.get("stream_profile_map") or {}
+            resolved = normalize_stream_profile((profile_map.get(normalized) or {}).get("profile") or normalized)
+            camera["stream_profile_resolved"] = resolved
+        entity = self._find_camera_entity(cam_key)
+        if entity is not None:
+            entity.async_write_ha_state()
         await self.async_request_refresh()
 
     async def async_set_stream_mode(self, cam_id: str, mode: str) -> None:
-        await self.async_set_stream_profile(cam_id, mode)
+        cam_key = str(cam_id)
+        normalized = self._normalize_stream_mode(mode)
+        camera = self.get_camera(cam_key)
+        if camera:
+            camera["stream_mode"] = normalized
+        entity = self._find_camera_entity(cam_key)
+        if entity is not None:
+            entity.set_stream_mode(normalized)
+            return
 
     async def async_playback_seek(
         self,

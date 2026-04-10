@@ -14,6 +14,7 @@ class DigestAuth:
         self.qop = "auth"
         self.algorithm = "MD5"
         self.opaque: str | None = None
+        self.stale = False
         self.nc = 0
 
     def _md5(self, value: str) -> str:
@@ -32,6 +33,7 @@ class DigestAuth:
         self.qop = parts.get("qop", "auth").split(",")[0].strip()
         self.algorithm = parts.get("algorithm", "MD5")
         self.opaque = parts.get("opaque")
+        self.stale = str(parts.get("stale", "")).lower() == "true"
 
     def ready(self) -> bool:
         return bool(self.realm and self.nonce)
@@ -42,6 +44,7 @@ class DigestAuth:
         self.opaque = None
         self.qop = "auth"
         self.algorithm = "MD5"
+        self.stale = False
         self.nc = 0
 
     def build(self, method: str, uri: str) -> str:

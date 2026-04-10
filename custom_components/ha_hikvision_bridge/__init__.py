@@ -580,7 +580,7 @@ async def _register_stream_service(hass: HomeAssistant, service_domain: str) -> 
             entities = getattr(coordinator, "entities", {})
             entity = entities.get(entity_id)
             if entity is not None:
-                entity.set_stream_mode(mode)
+                await coordinator.async_set_stream_mode(entity._cam_id, mode)
                 break
 
     hass.services.async_register(service_domain, SERVICE_SET_STREAM_MODE, set_stream_mode)
@@ -592,7 +592,7 @@ async def _register_stream_service(hass: HomeAssistant, service_domain: str) -> 
             entities = getattr(coordinator, "entities", {})
             entity = entities.get(entity_id)
             if entity is not None:
-                entity.set_stream_profile(profile)
+                await coordinator.async_set_stream_profile(entity._cam_id, profile)
                 break
 
     hass.services.async_register(service_domain, SERVICE_SET_STREAM_PROFILE, set_stream_profile)
