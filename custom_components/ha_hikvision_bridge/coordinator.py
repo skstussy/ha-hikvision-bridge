@@ -613,10 +613,22 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             '</PTZData>'
         )
 
-        await self._send_put_xml(endpoint, body)
+        resp_text = await self._send_put_xml(endpoint, body)
         self._push_debug_event(
             category="ptz",
             event="ptz_move_sent",
+            context={
+                    "pan": pan,
+                    "tilt": tilt,
+                    "speed": speed,
+                    "duration": duration,
+                    "continuous_requested": bool(continuous),
+                    "stop_requested": bool(stop),
+                    "mode": "momentary",
+                    "endpoint": endpoint,
+                    "payload": body,
+                    "response": resp_text,
+            },
             message=f"PTZ move sent for camera {cam_key}",
             camera_id=cam_key,
             context={
