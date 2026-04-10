@@ -606,6 +606,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             '<PTZData>'
             f'<pan>{pan}</pan>'
             f'<tilt>{tilt}</tilt>'
+            f'<panSpeed>{speed}</panSpeed>'
+            f'<tiltSpeed>{speed}</tiltSpeed>'
             '<zoom>0</zoom>'
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
