@@ -620,12 +620,9 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         endpoint = self._build_ptz_endpoint(cam_key, "momentary")
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
-            '<PTZData>'
+            '<PTZData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">'
             f'<pan>{pan}</pan>'
             f'<tilt>{tilt}</tilt>'
-            f'<panSpeed>{speed}</panSpeed>'
-            f'<tiltSpeed>{speed}</tiltSpeed>'
-            '<zoom>0</zoom>'
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
