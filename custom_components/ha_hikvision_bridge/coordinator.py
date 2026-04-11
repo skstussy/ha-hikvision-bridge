@@ -475,6 +475,23 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             allow_empty=True,
         )
 
+    async def _send_put_xml_with_response(
+        self,
+        path: str,
+        xml_body: str,
+        *,
+        expected: tuple[int, ...] = (200, 201, 204),
+    ) -> tuple[str, dict[str, Any]]:
+        return await self._request_text(
+            "PUT",
+            path,
+            body=xml_body,
+            expected=expected,
+            headers={"Content-Type": "application/xml; charset=UTF-8"},
+            allow_empty=True,
+            return_response=True,
+        )
+
     def _build_ptz_endpoint(self, cam_id: str, operation: str) -> str:
         cam_key = str(cam_id)
         return f"/ISAPI/ContentMgmt/PTZCtrlProxy/channels/{cam_key}/{operation}"
@@ -612,12 +629,24 @@ class HikvisionCoordinator(DataUpdateCoordinator):
             f'<Momentary><duration>{duration}</duration></Momentary>'
             '</PTZData>'
         )
+        request_headers = {"Content-Type": "application/xml; charset=UTF-8"}
+        request_data = {
+            "method": "PUT",
+            "path": endpoint,
+            "headers": self._mask_headers(request_headers),
+            "body": body,
+        }
 
-        resp_text = await self._send_put_xml(endpoint, body)
-        self._push_debug_event(
-            category="ptz",
-            event="ptz_move_sent",
-            context={
+        try:
+            response_text, response_data = await self._send_put_xml_with_response(endpoint, body)
+        except HikvisionEndpointError as err:
+            self._push_debug_event(
+                level="error",
+                category="ptz",
+                event="ptz_move_failed",
+                message=f"PTZ move failed for camera {cam_key}",
+                camera_id=cam_key,
+                context={
                     "pan": pan,
                     "tilt": tilt,
                     "speed": speed,
@@ -626,9 +655,20 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                     "stop_requested": bool(stop),
                     "mode": "momentary",
                     "endpoint": endpoint,
-                    "payload": body,
-                    "response": resp_text,
-            },
+                },
+                request=request_data,
+                response={
+                    "status": err.status,
+                    "body": (err.body or "")[:4000],
+                    "classification": err.classification,
+                },
+                error=str(err),
+            )
+            raise
+
+        self._push_debug_event(
+            category="ptz",
+            event="ptz_move_sent",
             message=f"PTZ move sent for camera {cam_key}",
             camera_id=cam_key,
             context={
@@ -640,7 +680,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 "stop_requested": bool(stop),
                 "mode": "momentary",
                 "endpoint": endpoint,
+                "response_length": len(response_text or ""),
             },
+            request=request_data,
+            response=response_data,
         )
 
     async def goto_preset(self, cam_id: str, preset: int) -> None:
@@ -917,20 +960,24 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         message: str,
         camera_id: str | None = None,
         context: dict | None = None,
+        request: dict | None = None,
+        response: dict | None = None,
+        error: Any | None = None,
     ) -> None:
         if not self._debug_category_enabled(category):
             return
-        self._debug_manager.add_event(
-            sanitize_debug(
-                {
-                    "level": level,
-                    "category": category,
-                    "event": event,
-                    "message": message,
-                    "camera_id": str(camera_id) if camera_id is not None else None,
-                    "context": context or {},
-                }
-            )
+        self._debug_manager.push(
+            level=level,
+            category=category,
+            event=event,
+            message=message,
+            source="backend",
+            camera_id=str(camera_id) if camera_id is not None else None,
+            entry_id=self.entry.entry_id,
+            context=sanitize_debug(context or {}),
+            request=sanitize_debug(request or {}),
+            response=sanitize_debug(response or {}),
+            error=sanitize_debug(error) if error is not None else None,
         )
 
     async def _request_text(
@@ -942,7 +989,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         expected: tuple[int, ...] = (200,),
         headers: dict[str, str] | None = None,
         allow_empty: bool = False,
-    ) -> str:
+        return_response: bool = False,
+    ) -> str | tuple[str, dict[str, Any]]:
         url = self.url(path)
         req_headers = dict(headers or {})
         last_error: HikvisionEndpointError | None = None
@@ -998,6 +1046,11 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                             body=text[:1000],
                             classification="empty_response",
                         )
+                    if return_response:
+                        return text, {
+                            "status": resp.status,
+                            "body": text[:4000],
+                        }
                     return text
             except ClientResponseError as err:
                 last_error = HikvisionEndpointError(
