@@ -260,6 +260,16 @@ audio_set_threshold:
       name: Classifier threshold
       required: false
       example: 0.7
+    classifier_backend:
+      name: Classifier backend
+      description: Preferred audio classifier backend such as yamnet or heuristic.
+      required: false
+      example: yamnet
+    classifier_model_source:
+      name: Classifier model source
+      description: TensorFlow Hub URL or local model path used by the audio classifier.
+      required: false
+      example: https://tfhub.dev/google/yamnet/1
 
 audio_ingest_samples:
   name: Ingest audio samples
@@ -309,7 +319,7 @@ audio_start_stream:
       name: Sample rate
       description: PCM sample rate requested from ffmpeg
       required: false
-      example: 8000
+      example: 16000
     chunk_size:
       name: Chunk size
       description: PCM bytes read per ingest cycle
@@ -345,3 +355,185 @@ audio_apply_calibration:
       description: Calibration preset. Use quiet, balanced, or noisy.
       required: false
       example: balanced
+
+
+video_enable:
+  name: Enable video sentinel
+  description: Enable backend video sentinel for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+video_disable:
+  name: Disable video sentinel
+  description: Disable backend video sentinel for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+video_enable_classifier:
+  name: Enable video classifier
+  description: Enable object classification for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+video_disable_classifier:
+  name: Disable video classifier
+  description: Disable object classification for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+video_set_threshold:
+  name: Configure video sentinel
+  description: Update video sentinel options for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    object_threshold:
+      name: Object threshold
+      required: false
+      example: 0.45
+    frame_interval_seconds:
+      name: Motion interval
+      required: false
+      example: 2.5
+    idle_interval_seconds:
+      name: Idle interval
+      required: false
+      example: 15
+    cooldown_seconds:
+      name: Cooldown
+      required: false
+      example: 10
+    motion_gated:
+      name: Motion gated
+      required: false
+      example: true
+    image_size:
+      name: Image size
+      required: false
+      example: 640
+    max_detections:
+      name: Max detections
+      required: false
+      example: 10
+    runtime_backend:
+      name: Runtime backend
+      required: false
+      example: ultralytics
+    runtime_preference:
+      name: Runtime preference
+      required: false
+      example: auto
+    model_source:
+      name: Model source
+      required: false
+      example: yolov8n.pt
+    target_labels:
+      name: Target labels
+      required: false
+      example:
+        - person
+        - car
+        - dog
+
+video_start_monitor:
+  name: Start video monitor
+  description: Start periodic snapshot-based video detection for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    classifier:
+      name: Enable classifier
+      required: false
+      example: true
+    runtime_backend:
+      name: Runtime backend
+      required: false
+      example: ultralytics
+    runtime_preference:
+      name: Runtime preference
+      required: false
+      example: auto
+    model_source:
+      name: Model source
+      required: false
+      example: yolov8n.pt
+    object_threshold:
+      name: Object threshold
+      required: false
+      example: 0.45
+    frame_interval_seconds:
+      name: Motion interval
+      required: false
+      example: 2.5
+    idle_interval_seconds:
+      name: Idle interval
+      required: false
+      example: 15
+    motion_gated:
+      name: Motion gated
+      required: false
+      example: true
+    image_size:
+      name: Image size
+      required: false
+      example: 640
+    max_detections:
+      name: Max detections
+      required: false
+      example: 10
+    target_labels:
+      name: Target labels
+      required: false
+      example:
+        - person
+        - car
+
+video_stop_monitor:
+  name: Stop video monitor
+  description: Stop periodic snapshot-based video detection for the selected camera channel.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+
+video_analyze_snapshot:
+  name: Analyze current snapshot
+  description: Fetch a fresh camera snapshot and run one video detection cycle immediately.
+  fields:
+    channel:
+      name: Channel
+      description: Camera channel number
+      required: true
+      example: 1
+    classifier:
+      name: Enable classifier
+      required: false
+      example: true
+    motion_active:
+      name: Motion active hint
+      required: false
+      example: false

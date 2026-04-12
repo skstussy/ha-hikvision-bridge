@@ -22,6 +22,7 @@ DEFAULT_DEBUG_CATEGORIES = (
     "alarm",
     "ptz",
     "audio",
+    "video_ai",
 )
 
 PLATFORMS = ["sensor", "binary_sensor", "camera"]
@@ -46,6 +47,16 @@ SERVICE_AUDIO_INGEST_SAMPLES = "audio_ingest_samples"
 SERVICE_AUDIO_START_STREAM = "audio_start_stream"
 SERVICE_AUDIO_STOP_STREAM = "audio_stop_stream"
 SERVICE_AUDIO_APPLY_CALIBRATION = "audio_apply_calibration"
+
+SERVICE_VIDEO_ENABLE = "video_enable"
+SERVICE_VIDEO_DISABLE = "video_disable"
+SERVICE_VIDEO_ENABLE_CLASSIFIER = "video_enable_classifier"
+SERVICE_VIDEO_DISABLE_CLASSIFIER = "video_disable_classifier"
+SERVICE_VIDEO_SET_THRESHOLD = "video_set_threshold"
+SERVICE_VIDEO_START_MONITOR = "video_start_monitor"
+SERVICE_VIDEO_STOP_MONITOR = "video_stop_monitor"
+SERVICE_VIDEO_ANALYZE_SNAPSHOT = "video_analyze_snapshot"
+
 
 STREAM_MODE_WEBRTC = "webrtc"
 STREAM_MODE_RTSP = "rtsp"

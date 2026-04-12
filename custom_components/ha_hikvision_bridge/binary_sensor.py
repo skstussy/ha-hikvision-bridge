@@ -55,6 +55,12 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
                     coordinator, dvr_serial, cam_id
                 ),
                 HikvisionCameraAudioShoutDetectedBinary(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoEnabledBinary(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoClassifierEnabledBinary(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoObjectDetectedBinary(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoPersonDetectedBinary(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoVehicleDetectedBinary(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoAnimalDetectedBinary(coordinator, dvr_serial, cam_id),
             ]
         )
 
@@ -93,6 +99,13 @@ class BaseCameraBinary(CoordinatorEntity, BinarySensorEntity):
 
     def _audio_config(self) -> dict[str, Any]:
         config = getattr(self.coordinator.audio, "_config", {})
+        return config.get(self._cam_id, {})
+
+    def _video_state(self) -> dict[str, Any]:
+        return self.coordinator.video.get_state(self._cam_id) or {}
+
+    def _video_config(self) -> dict[str, Any]:
+        config = getattr(self.coordinator.video, "_config", {})
         return config.get(self._cam_id, {})
 
     @property
@@ -198,6 +211,61 @@ class HikvisionCameraAudioLabelBinary(BaseCameraBinary):
                 ),
             }
         )
+        return attrs
+
+
+class BaseCameraVideoBinary(BaseCameraBinary):
+    def __init__(
+        self,
+        coordinator,
+        dvr_serial: str,
+        cam_id: str | int,
+        name: str,
+        key: str,
+    ) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id)
+        self._video_key = key
+        self._attr_name = name
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{key}"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._video_state().get(self._video_key, False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = dict(super().extra_state_attributes)
+        attrs["video_key"] = self._video_key
+        return attrs
+
+
+class HikvisionCameraVideoLabelBinary(BaseCameraBinary):
+    def __init__(
+        self,
+        coordinator,
+        dvr_serial: str,
+        cam_id: str | int,
+        labels: set[str],
+        name: str,
+        key: str,
+    ) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id)
+        self._labels = {str(label).strip().lower() for label in labels if str(label).strip()}
+        self._attr_name = name
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{key}"
+
+    @property
+    def is_on(self) -> bool:
+        state = self._video_state()
+        labels = {str(label).strip().lower() for label in state.get("detected_labels", []) if str(label).strip()}
+        return bool(self._labels & labels)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = dict(super().extra_state_attributes)
+        attrs["target_labels"] = sorted(self._labels)
+        attrs["top_label"] = self._video_state().get("top_label")
+        attrs["top_confidence"] = self._video_state().get("top_confidence")
         return attrs
 
 
@@ -494,3 +562,52 @@ class HikvisionCameraAudioGunshotDetectedBinary(HikvisionCameraAudioLabelBinary)
     def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
         super().__init__(coordinator, dvr_serial, cam_id, "gunshot", "Audio Gunshot Detected")
         self._attr_device_class = BinarySensorDeviceClass.SOUND
+
+
+
+class HikvisionCameraVideoEnabledBinary(BaseCameraVideoBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Sentinel Enabled", "enabled")
+
+
+class HikvisionCameraVideoClassifierEnabledBinary(BaseCameraVideoBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Classifier Enabled", "classifier_enabled")
+
+
+class HikvisionCameraVideoObjectDetectedBinary(HikvisionCameraVideoLabelBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(
+            coordinator,
+            dvr_serial,
+            cam_id,
+            {"person", "car", "truck", "bus", "motorcycle", "bicycle", "dog", "cat"},
+            "Video Object Detected",
+            "video_object_detected",
+        )
+        self._attr_device_class = BinarySensorDeviceClass.MOTION
+
+
+class HikvisionCameraVideoPersonDetectedBinary(HikvisionCameraVideoLabelBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id, {"person"}, "Video Person Detected", "video_person_detected")
+        self._attr_device_class = BinarySensorDeviceClass.MOTION
+
+
+class HikvisionCameraVideoVehicleDetectedBinary(HikvisionCameraVideoLabelBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(
+            coordinator,
+            dvr_serial,
+            cam_id,
+            {"car", "truck", "bus", "motorcycle", "bicycle"},
+            "Video Vehicle Detected",
+            "video_vehicle_detected",
+        )
+        self._attr_device_class = BinarySensorDeviceClass.MOTION
+
+
+class HikvisionCameraVideoAnimalDetectedBinary(HikvisionCameraVideoLabelBinary):
+    def __init__(self, coordinator, dvr_serial: str, cam_id: str | int) -> None:
+        super().__init__(coordinator, dvr_serial, cam_id, {"dog", "cat"}, "Video Animal Detected", "video_animal_detected")
+        self._attr_device_class = BinarySensorDeviceClass.MOTION

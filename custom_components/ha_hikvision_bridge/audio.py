@@ -15,6 +15,7 @@ class HikvisionAudioManager:
         self.coordinator = coordinator
         self._state: dict[str, dict[str, Any]] = {}
         self._buffers: dict[str, deque] = {}
+        self._classifier_buffers: dict[str, deque] = {}
         self._config: dict[str, dict[str, Any]] = {}
         self._native_tasks: dict[str, asyncio.Task] = {}
         self._native_processes: dict[str, asyncio.subprocess.Process] = {}
@@ -27,13 +28,16 @@ class HikvisionAudioManager:
             "clipping_threshold": 0.98,
             "voice_threshold": 0.04,
             "classifier_threshold": 0.70,
+            "classifier_backend": "yamnet",
+            "classifier_model_source": "https://tfhub.dev/google/yamnet/1",
+            "classifier_min_interval_seconds": 4.0,
             "cooldown_seconds": 8.0,
             "clip_frames": 100,
             "classifier_rearm_seconds": 12.0,
             "native_stream_enabled": False,
             "native_stream_profile": "active",
             "native_stream_ffmpeg_path": "ffmpeg",
-            "native_sample_rate": 8000,
+            "native_sample_rate": 16000,
             "native_chunk_size": 3200,
         }
 
@@ -56,6 +60,9 @@ class HikvisionAudioManager:
             "classifier_label": None,
             "classifier_confidence": 0.0,
             "classifier_metrics": {},
+            "classifier_runtime_status": "idle",
+            "classifier_runtime_backend": "yamnet",
+            "classifier_runtime_error": None,
             "last_event": None,
             "last_event_ts": 0.0,
             "last_classifier_ts": 0.0,
@@ -81,7 +88,9 @@ class HikvisionAudioManager:
             "calibration_profile": "default",
         }
         self._config[cam] = dict(self._defaults)
-        self._buffers[cam] = deque(maxlen=self._defaults["clip_frames"])
+        clip_frames = max(8, int(self._defaults["clip_frames"]))
+        self._buffers[cam] = deque(maxlen=clip_frames)
+        self._classifier_buffers[cam] = deque(maxlen=clip_frames)
 
     def get_state(self, camera_id: str) -> dict | None:
         return self._state.get(str(camera_id))
@@ -98,6 +107,22 @@ class HikvisionAudioManager:
         self.ensure_camera(camera_id)
         self._state[str(camera_id)]["classifier_enabled"] = bool(enabled)
 
+    def set_classifier_runtime_state(
+        self,
+        camera_id: str,
+        *,
+        status: str | None = None,
+        backend: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.ensure_camera(camera_id)
+        state = self._state[str(camera_id)]
+        if status is not None:
+            state["classifier_runtime_status"] = status
+        if backend is not None:
+            state["classifier_runtime_backend"] = backend
+        state["classifier_runtime_error"] = error
+
     def recalibrate(self, camera_id: str) -> None:
         self.ensure_camera(camera_id)
         state = self._state[str(camera_id)]
@@ -106,16 +131,32 @@ class HikvisionAudioManager:
 
     def set_thresholds(self, camera_id: str, **kwargs) -> None:
         self.ensure_camera(camera_id)
-        conf = self._config[str(camera_id)]
+        cam = str(camera_id)
+        conf = self._config[cam]
         for key, value in kwargs.items():
-            if value is not None and key in conf:
-                conf[key] = value
-                if key in {"native_stream_profile", "native_stream_ffmpeg_path"}:
-                    self._state[str(camera_id)][key] = value
+            if value is None or key not in conf:
+                continue
+            conf[key] = value
+            if key in {"native_stream_profile", "native_stream_ffmpeg_path"}:
+                self._state[cam][key] = value
+        clip_frames = max(8, int(conf.get("clip_frames") or self._defaults["clip_frames"]))
+        if self._buffers[cam].maxlen != clip_frames:
+            self._buffers[cam] = deque(self._buffers[cam], maxlen=clip_frames)
+        if self._classifier_buffers[cam].maxlen != clip_frames:
+            self._classifier_buffers[cam] = deque(self._classifier_buffers[cam], maxlen=clip_frames)
 
     def get_clip(self, camera_id: str) -> list[list[float]]:
         self.ensure_camera(camera_id)
         return list(self._buffers[str(camera_id)])
+
+    def get_classifier_clip(self, camera_id: str) -> list[list[float]]:
+        self.ensure_camera(camera_id)
+        return list(self._classifier_buffers[str(camera_id)])
+
+    def get_classifier_sample_rate(self, camera_id: str) -> int:
+        self.ensure_camera(camera_id)
+        conf = self._config[str(camera_id)]
+        return max(4000, int(conf.get("native_sample_rate") or 16000))
 
     def ingest_samples(self, camera_id: str, samples: list[int | float]) -> dict[str, Any] | None:
         self.ensure_camera(camera_id)
@@ -126,7 +167,8 @@ class HikvisionAudioManager:
         if not state["enabled"] or not samples:
             return None
 
-        values = [self._normalize_sample(value) for value in samples]
+        signed_values = [self._normalize_waveform_sample(value) for value in samples]
+        values = [abs(sample) for sample in signed_values]
         level = sum(values) / len(values)
         peak = max(values)
         baseline = (state["baseline"] * 0.98) + (level * 0.02)
@@ -154,6 +196,7 @@ class HikvisionAudioManager:
         )
 
         self._buffers[cam].append(values)
+        self._classifier_buffers[cam].append(signed_values)
         self._emit_detection_events(cam)
         return state
 
@@ -166,6 +209,8 @@ class HikvisionAudioManager:
         accepted: bool,
         source: str = "classifier",
         metrics: dict[str, Any] | None = None,
+        backend: str | None = None,
+        error: str | None = None,
     ) -> None:
         self.ensure_camera(camera_id)
         state = self._state[str(camera_id)]
@@ -175,6 +220,10 @@ class HikvisionAudioManager:
         state["last_classifier_ts"] = time.time()
         state["last_classifier_source"] = source
         state["last_classifier_accepted"] = bool(accepted)
+        if backend is not None:
+            state["classifier_runtime_backend"] = backend
+        state["classifier_runtime_status"] = "ready" if error is None else "error"
+        state["classifier_runtime_error"] = error
         if accepted and label:
             state["last_event"] = f"audio_classifier_{label}"
             if label == "gunshot":
@@ -186,7 +235,7 @@ class HikvisionAudioManager:
         *,
         stream_url: str,
         ffmpeg_path: str = "ffmpeg",
-        sample_rate: int = 8000,
+        sample_rate: int = 16000,
         chunk_size: int = 3200,
         source: str | None = None,
         profile: str = "active",
@@ -213,7 +262,7 @@ class HikvisionAudioManager:
         self._config[cam]["native_stream_enabled"] = True
         self._config[cam]["native_stream_profile"] = str(profile or "active")
         self._config[cam]["native_stream_ffmpeg_path"] = str(ffmpeg_path or "ffmpeg")
-        self._config[cam]["native_sample_rate"] = max(4000, int(sample_rate or 8000))
+        self._config[cam]["native_sample_rate"] = max(4000, int(sample_rate or 16000))
         self._config[cam]["native_chunk_size"] = max(512, int(chunk_size or 3200))
 
         task = asyncio.create_task(self._native_stream_loop(cam))
@@ -276,7 +325,7 @@ class HikvisionAudioManager:
             "-ac",
             "1",
             "-ar",
-            str(int(conf.get("native_sample_rate") or 8000)),
+            str(int(conf.get("native_sample_rate") or 16000)),
             "-f",
             "s16le",
             "pipe:1",
@@ -385,19 +434,22 @@ class HikvisionAudioManager:
         count = usable // 2
         return list(struct.unpack("<" + ("h" * count), chunk[:usable]))
 
-    def _normalize_sample(self, value: int | float) -> float:
+    def _normalize_waveform_sample(self, value: int | float) -> float:
         try:
             sample = float(value)
         except (TypeError, ValueError):
             return 0.0
 
         if -1.0 <= sample <= 1.0:
-            return abs(sample)
+            return max(-1.0, min(sample, 1.0))
 
         if -32768.0 <= sample <= 32767.0:
-            return min(abs(sample) / 32767.0, 1.0)
+            return max(-1.0, min(sample / 32768.0, 1.0))
 
-        return min(max(abs(sample), 0.0), 255.0) / 255.0
+        if 0.0 <= sample <= 255.0:
+            return max(-1.0, min((sample - 127.5) / 127.5, 1.0))
+
+        return max(-1.0, min(sample, 1.0))
 
     def _detect_voice(self, values: list[float], level: float, threshold: float) -> bool:
         if level < threshold or not values:

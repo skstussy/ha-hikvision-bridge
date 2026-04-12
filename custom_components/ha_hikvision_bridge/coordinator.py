@@ -17,6 +17,8 @@ from homeassistant.util import dt as dt_util
 
 from .audio import HikvisionAudioManager
 from .audio_classifier import HikvisionAudioClassifier
+from .video import HikvisionVideoManager
+from .video_classifier import HikvisionVideoClassifier
 
 from .const import (
     CONF_DEBUG_CATEGORIES,
@@ -238,6 +240,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         self.digest = DigestAuth(self.username, self.password)
         self.audio = HikvisionAudioManager(hass, self)
         self.audio_classifier = HikvisionAudioClassifier()
+        self.video = HikvisionVideoManager(hass, self)
+        self.video_classifier = HikvisionVideoClassifier()
 
     async def async_ingest_audio_samples(self, camera_id: str, samples: list[int | float]) -> None:
         state = self.audio.ingest_samples(str(camera_id), samples)
@@ -259,6 +263,9 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         await self._maybe_run_audio_classifier(str(camera_id))
         self.async_update_listeners()
 
+    def _camera_motion_active(self, camera_id: str) -> bool:
+        return bool(self.data.get("alarm_states", {}).get(f"motion_{camera_id}", False))
+
     async def _maybe_run_audio_classifier(self, camera_id: str) -> None:
         state = self.audio.get_state(camera_id)
         if not state:
@@ -268,22 +275,53 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         if not (state.get("abnormal") or state.get("voice_detected") or state.get("clipping")):
             return
 
-        clip = self.audio.get_clip(camera_id)
-        result = await self.audio_classifier.classify_clip(camera_id, clip)
+        config = self.audio.get_config(str(camera_id))
+        now = dt_util.utcnow().timestamp()
+        last_ts = float(state.get("last_classifier_ts") or 0.0)
+        min_interval = float(config.get("classifier_min_interval_seconds") or 0.0)
+        if min_interval > 0 and (now - last_ts) < min_interval:
+            return
+        if state.get("last_classifier_accepted"):
+            rearm = float(config.get("classifier_rearm_seconds") or 0.0)
+            if rearm > 0 and (now - last_ts) < rearm:
+                return
+
+        clip = self.audio.get_classifier_clip(camera_id)
+        self.audio.set_classifier_runtime_state(
+            camera_id,
+            status="running",
+            backend=str(config.get("classifier_backend") or "yamnet"),
+            error=None,
+        )
+        result = await self.audio_classifier.classify_clip(
+            self.hass,
+            camera_id,
+            clip,
+            sample_rate=self.audio.get_classifier_sample_rate(camera_id),
+            preferred_backend=str(config.get("classifier_backend") or "yamnet"),
+            model_source=config.get("classifier_model_source"),
+        )
         if not result:
+            self.audio.set_classifier_runtime_state(camera_id, status="idle")
             return
 
         label = result.get("label")
         confidence = float(result.get("confidence", 0.0) or 0.0)
-        threshold = float(self.audio.get_config(str(camera_id)).get("classifier_threshold") or 0.0)
+        threshold = float(config.get("classifier_threshold") or 0.0)
         accepted = bool(label) and confidence >= threshold and label != "ambient"
+        source = str(result.get("source") or "classifier")
+        backend = str(result.get("backend") or source)
+        error = result.get("error")
 
         self.audio.update_classifier_result(
             str(camera_id),
             label=label,
             confidence=confidence,
             accepted=accepted,
-            source="signal_heuristic",
+            source=source,
+            metrics=result.get("metrics", {}),
+            backend=backend,
+            error=error,
         )
 
         self._push_debug_event(
@@ -297,7 +335,10 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 "confidence": confidence,
                 "threshold": threshold,
                 "accepted": accepted,
+                "source": source,
+                "backend": backend,
                 "metrics": result.get("metrics", {}),
+                "error": error,
             },
         )
 
@@ -307,11 +348,148 @@ class HikvisionCoordinator(DataUpdateCoordinator):
                 "label": label,
                 "confidence": confidence,
                 "threshold": threshold,
+                "backend": backend,
+                "source": source,
             }
             self.hass.bus.async_fire(f"{DOMAIN}_audio_detected", payload)
             if label == "gunshot":
                 self.hass.bus.async_fire(f"{DOMAIN}_gunshot_detected", payload)
         self.async_update_listeners()
+
+    async def async_run_video_detection_cycle(self, camera_id: str, *, motion_active: bool | None = None) -> None:
+        state = self.video.get_state(camera_id)
+        if not state:
+            return
+        if not state.get("enabled") or not state.get("classifier_enabled"):
+            return
+
+        config = self.video.get_config(camera_id)
+        motion_now = self._camera_motion_active(camera_id) if motion_active is None else bool(motion_active)
+        last_run_ts = float(state.get("last_run_ts") or 0.0)
+        interval = float(config.get("frame_interval_seconds") or 2.5)
+        if not motion_now and bool(config.get("motion_gated", True)):
+            interval = float(config.get("idle_interval_seconds") or interval)
+        now = dt_util.utcnow().timestamp()
+        if interval > 0 and (now - last_run_ts) < interval:
+            return
+
+        self.video.update_runtime_state(
+            camera_id,
+            status="running",
+            backend=str(config.get("runtime_backend") or "ultralytics"),
+            error=None,
+        )
+        profiles = self.get_stream_profiles(str(camera_id))
+        preferred_stream = profiles.get("sub") or profiles.get("main") or {}
+        preferred_stream_id = preferred_stream.get("stream_id") or preferred_stream.get("id")
+        image_bytes = await self.snapshot_image(str(camera_id), preferred_stream_id)
+        await self.async_analyze_video_snapshot(
+            str(camera_id),
+            image_bytes,
+            motion_active=motion_now,
+            source="snapshot",
+        )
+
+    async def async_analyze_video_snapshot(
+        self,
+        camera_id: str,
+        image_bytes: bytes | None,
+        *,
+        motion_active: bool | None = None,
+        source: str = "snapshot",
+    ) -> None:
+        state = self.video.get_state(camera_id)
+        if not state:
+            return
+        config = self.video.get_config(camera_id)
+        motion_now = self._camera_motion_active(camera_id) if motion_active is None else bool(motion_active)
+        if not image_bytes:
+            self.video.update_detection_result(
+                camera_id,
+                label=None,
+                confidence=0.0,
+                detections=[],
+                source=source,
+                backend=str(config.get("runtime_backend") or "ultralytics"),
+                error="snapshot_unavailable",
+                motion_active=motion_now,
+            )
+            self.async_update_listeners()
+            return
+
+        result = await self.video_classifier.classify_image(
+            self.hass,
+            camera_id,
+            image_bytes,
+            model_source=str(config.get("model_source") or "yolov8n.pt"),
+            confidence=float(config.get("object_threshold") or 0.45),
+            image_size=int(config.get("image_size") or 640),
+            max_detections=int(config.get("max_detections") or 10),
+            device=str(config.get("runtime_preference") or "auto"),
+            target_labels=list(config.get("target_labels") or []),
+        )
+        if not result:
+            return
+
+        label = result.get("label")
+        confidence = float(result.get("confidence") or 0.0)
+        detections = list(result.get("detections") or [])
+        accepted = bool(label) and confidence >= float(config.get("object_threshold") or 0.45)
+        backend = str(result.get("backend") or "ultralytics")
+        device = str(result.get("device") or config.get("runtime_preference") or "auto")
+        error = result.get("error")
+
+        self.video.update_detection_result(
+            camera_id,
+            label=label,
+            confidence=confidence,
+            detections=detections,
+            source=source,
+            backend=backend,
+            device=device,
+            accepted=accepted,
+            error=error,
+            motion_active=motion_now,
+        )
+
+        self._push_debug_event(
+            level="info" if accepted else "debug",
+            category="video_ai",
+            event="video_classifier_result",
+            message=f"Video classifier produced {label or 'none'} for camera {camera_id}",
+            camera_id=str(camera_id),
+            context={
+                "label": label,
+                "confidence": confidence,
+                "accepted": accepted,
+                "backend": backend,
+                "device": device,
+                "motion_active": motion_now,
+                "detection_count": len(detections),
+                "detections": detections[:5],
+                "error": error,
+            },
+        )
+
+        if accepted:
+            payload = {
+                "camera_id": str(camera_id),
+                "label": label,
+                "confidence": confidence,
+                "backend": backend,
+                "device": device,
+                "motion_active": motion_now,
+                "detections": detections[:5],
+            }
+            self.hass.bus.async_fire(f"{DOMAIN}_video_detected", payload)
+        self.async_update_listeners()
+
+    async def async_start_video_monitor(self, cam_id: str, **options) -> None:
+        self.video.ensure_camera(str(cam_id))
+        await self.video.async_start_monitor(str(cam_id), **options)
+
+    async def async_stop_video_monitor(self, cam_id: str) -> None:
+        await self.video.async_stop_monitor(str(cam_id))
 
     def url(self, path: str) -> str:
         scheme = "https" if self.use_https else "http"
@@ -426,11 +604,11 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         }
         return value if value in allowed else DEFAULT_STREAM_MODE
 
-    async def snapshot_image(self, cam_id: str) -> bytes | None:
+    async def snapshot_image(self, cam_id: str, stream_id: str | None = None) -> bytes | None:
         """Fetch a JPEG snapshot for a camera channel."""
         camera = self.get_camera(cam_id)
-        stream_id = camera.get("stream_id") or f"{cam_id}01"
-        path = f"/ISAPI/Streaming/channels/{stream_id}/picture"
+        selected_stream_id = stream_id or camera.get("stream_id") or f"{cam_id}01"
+        path = f"/ISAPI/Streaming/channels/{selected_stream_id}/picture"
         url = self.url(path)
 
         for attempt in range(2):
@@ -842,7 +1020,7 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         *,
         profile: str = "active",
         ffmpeg_path: str = "ffmpeg",
-        sample_rate: int = 8000,
+        sample_rate: int = 16000,
         chunk_size: int = 3200,
         enable_classifier: bool = True,
     ) -> None:
@@ -1375,6 +1553,8 @@ class HikvisionCoordinator(DataUpdateCoordinator):
         if self._alarm_stream_task is not None:
             self._alarm_stream_task.cancel()
             self._alarm_stream_task = None
+        await self.audio.async_stop_all_native_streams()
+        await self.video.async_stop_all_monitors()
 
     async def async_set_stream_profile(self, cam_id: str, profile: str) -> None:
         cam_key = str(cam_id)

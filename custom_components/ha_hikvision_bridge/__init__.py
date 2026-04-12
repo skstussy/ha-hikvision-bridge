@@ -31,6 +31,14 @@ from .const import (
     SERVICE_AUDIO_START_STREAM,
     SERVICE_AUDIO_STOP_STREAM,
     SERVICE_AUDIO_APPLY_CALIBRATION,
+    SERVICE_VIDEO_ENABLE,
+    SERVICE_VIDEO_DISABLE,
+    SERVICE_VIDEO_ENABLE_CLASSIFIER,
+    SERVICE_VIDEO_DISABLE_CLASSIFIER,
+    SERVICE_VIDEO_SET_THRESHOLD,
+    SERVICE_VIDEO_START_MONITOR,
+    SERVICE_VIDEO_STOP_MONITOR,
+    SERVICE_VIDEO_ANALYZE_SNAPSHOT,
 )
 from .coordinator import HikvisionCoordinator
 from .helpers import get_dvr_serial, safe_find_text
@@ -105,6 +113,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_AUDIO_START_STREAM,
                 SERVICE_AUDIO_STOP_STREAM,
                 SERVICE_AUDIO_APPLY_CALIBRATION,
+                SERVICE_VIDEO_ENABLE,
+                SERVICE_VIDEO_DISABLE,
+                SERVICE_VIDEO_ENABLE_CLASSIFIER,
+                SERVICE_VIDEO_DISABLE_CLASSIFIER,
+                SERVICE_VIDEO_SET_THRESHOLD,
+                SERVICE_VIDEO_START_MONITOR,
+                SERVICE_VIDEO_STOP_MONITOR,
+                SERVICE_VIDEO_ANALYZE_SNAPSHOT,
             ):
                 if hass.services.has_service(service_domain, service):
                     hass.services.async_remove(service_domain, service)
@@ -277,6 +293,8 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
             clipping_threshold=call.data.get("clipping_threshold"),
             voice_threshold=call.data.get("voice_threshold"),
             classifier_threshold=call.data.get("classifier_threshold"),
+            classifier_backend=call.data.get("classifier_backend"),
+            classifier_model_source=call.data.get("classifier_model_source"),
         )
         coordinator._push_debug_event(
             category="audio",
@@ -305,7 +323,7 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
             channel,
             profile=call.data.get("profile", "active"),
             ffmpeg_path=call.data.get("ffmpeg_path", "ffmpeg"),
-            sample_rate=call.data.get("sample_rate", 8000),
+            sample_rate=call.data.get("sample_rate", 16000),
             chunk_size=call.data.get("chunk_size", 3200),
             enable_classifier=call.data.get("classifier", True),
         )
@@ -355,6 +373,143 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
         coordinator.async_update_listeners()
 
 
+    async def video_enable_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        coordinator.video.ensure_camera(channel)
+        coordinator.video.set_enabled(channel, True)
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_enabled",
+            message=f"Video sentinel enabled for camera {channel}",
+            camera_id=channel,
+        )
+        coordinator.async_update_listeners()
+
+    async def video_disable_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        coordinator.video.ensure_camera(channel)
+        coordinator.video.set_enabled(channel, False)
+        await coordinator.async_stop_video_monitor(channel)
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_disabled",
+            message=f"Video sentinel disabled for camera {channel}",
+            camera_id=channel,
+        )
+        coordinator.async_update_listeners()
+
+    async def video_enable_classifier_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        coordinator.video.ensure_camera(channel)
+        coordinator.video.set_classifier_enabled(channel, True)
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_classifier_enabled",
+            message=f"Video classifier enabled for camera {channel}",
+            camera_id=channel,
+        )
+        coordinator.async_update_listeners()
+
+    async def video_disable_classifier_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        coordinator.video.ensure_camera(channel)
+        coordinator.video.set_classifier_enabled(channel, False)
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_classifier_disabled",
+            message=f"Video classifier disabled for camera {channel}",
+            camera_id=channel,
+        )
+        coordinator.async_update_listeners()
+
+    async def video_set_threshold_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        coordinator.video.ensure_camera(channel)
+        coordinator.video.set_options(
+            channel,
+            object_threshold=call.data.get("object_threshold"),
+            frame_interval_seconds=call.data.get("frame_interval_seconds"),
+            idle_interval_seconds=call.data.get("idle_interval_seconds"),
+            cooldown_seconds=call.data.get("cooldown_seconds"),
+            motion_gated=call.data.get("motion_gated"),
+            image_size=call.data.get("image_size"),
+            max_detections=call.data.get("max_detections"),
+            runtime_backend=call.data.get("runtime_backend"),
+            runtime_preference=call.data.get("runtime_preference"),
+            model_source=call.data.get("model_source"),
+            target_labels=call.data.get("target_labels"),
+        )
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_thresholds_updated",
+            message=f"Video sentinel options updated for camera {channel}",
+            camera_id=channel,
+            context={key: value for key, value in call.data.items() if key not in {"entry_id"}},
+        )
+        coordinator.async_update_listeners()
+
+    async def video_start_monitor_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        await coordinator.async_start_video_monitor(
+            channel,
+            classifier_enabled=call.data.get("classifier", True),
+            runtime_backend=call.data.get("runtime_backend", "ultralytics"),
+            runtime_preference=call.data.get("runtime_preference", "auto"),
+            model_source=call.data.get("model_source", "yolov8n.pt"),
+            object_threshold=call.data.get("object_threshold", 0.45),
+            frame_interval_seconds=call.data.get("frame_interval_seconds", 2.5),
+            idle_interval_seconds=call.data.get("idle_interval_seconds", 15.0),
+            cooldown_seconds=call.data.get("cooldown_seconds", 10.0),
+            motion_gated=call.data.get("motion_gated", True),
+            image_size=call.data.get("image_size", 640),
+            max_detections=call.data.get("max_detections", 10),
+            target_labels=call.data.get("target_labels", []),
+        )
+        coordinator.video.set_enabled(channel, True)
+        coordinator.video.set_classifier_enabled(channel, call.data.get("classifier", True))
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_monitor_started",
+            message=f"Video monitor started for camera {channel}",
+            camera_id=channel,
+            context={key: value for key, value in call.data.items() if key not in {"entry_id"}},
+        )
+        coordinator.async_update_listeners()
+
+    async def video_stop_monitor_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        await coordinator.async_stop_video_monitor(channel)
+        coordinator._push_debug_event(
+            category="video_ai",
+            event="video_monitor_stopped",
+            message=f"Video monitor stopped for camera {channel}",
+            camera_id=channel,
+        )
+        coordinator.async_update_listeners()
+
+    async def video_analyze_snapshot_service(call: ServiceCall) -> None:
+        coordinator = await _resolve_coordinator(call)
+        channel = str(call.data["channel"])
+        coordinator.video.ensure_camera(channel)
+        coordinator.video.set_enabled(channel, True)
+        if call.data.get("classifier", True):
+            coordinator.video.set_classifier_enabled(channel, True)
+        image_bytes = await coordinator.snapshot_image(channel)
+        await coordinator.async_analyze_video_snapshot(
+            channel,
+            image_bytes,
+            motion_active=call.data.get("motion_active"),
+            source="service_snapshot",
+        )
+
+
     hass.services.async_register(
         service_domain,
         SERVICE_AUDIO_START_STREAM,
@@ -364,7 +519,7 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
                 vol.Required("channel"): cv.string,
                 vol.Optional("profile", default="active"): cv.string,
                 vol.Optional("ffmpeg_path", default="ffmpeg"): cv.string,
-                vol.Optional("sample_rate", default=8000): vol.Coerce(int),
+                vol.Optional("sample_rate", default=16000): vol.Coerce(int),
                 vol.Optional("chunk_size", default=3200): vol.Coerce(int),
                 vol.Optional("classifier", default=True): cv.boolean,
                 vol.Optional("entry_id"): cv.string,
@@ -390,6 +545,121 @@ async def _async_register_services(hass: HomeAssistant, service_domain: str) -> 
             {
                 vol.Required("channel"): cv.string,
                 vol.Optional("preset", default="balanced"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+
+
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_ENABLE,
+        video_enable_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_DISABLE,
+        video_disable_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_ENABLE_CLASSIFIER,
+        video_enable_classifier_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_DISABLE_CLASSIFIER,
+        video_disable_classifier_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_SET_THRESHOLD,
+        video_set_threshold_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("object_threshold"): vol.Coerce(float),
+                vol.Optional("frame_interval_seconds"): vol.Coerce(float),
+                vol.Optional("idle_interval_seconds"): vol.Coerce(float),
+                vol.Optional("cooldown_seconds"): vol.Coerce(float),
+                vol.Optional("motion_gated"): cv.boolean,
+                vol.Optional("image_size"): vol.Coerce(int),
+                vol.Optional("max_detections"): vol.Coerce(int),
+                vol.Optional("runtime_backend"): cv.string,
+                vol.Optional("runtime_preference"): cv.string,
+                vol.Optional("model_source"): cv.string,
+                vol.Optional("target_labels"): vol.All(cv.ensure_list, [cv.string]),
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_START_MONITOR,
+        video_start_monitor_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("classifier", default=True): cv.boolean,
+                vol.Optional("runtime_backend", default="ultralytics"): cv.string,
+                vol.Optional("runtime_preference", default="auto"): cv.string,
+                vol.Optional("model_source", default="yolov8n.pt"): cv.string,
+                vol.Optional("object_threshold", default=0.45): vol.Coerce(float),
+                vol.Optional("frame_interval_seconds", default=2.5): vol.Coerce(float),
+                vol.Optional("idle_interval_seconds", default=15.0): vol.Coerce(float),
+                vol.Optional("cooldown_seconds", default=10.0): vol.Coerce(float),
+                vol.Optional("motion_gated", default=True): cv.boolean,
+                vol.Optional("image_size", default=640): vol.Coerce(int),
+                vol.Optional("max_detections", default=10): vol.Coerce(int),
+                vol.Optional("target_labels", default=[]): vol.All(cv.ensure_list, [cv.string]),
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_STOP_MONITOR,
+        video_stop_monitor_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("entry_id"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        service_domain,
+        SERVICE_VIDEO_ANALYZE_SNAPSHOT,
+        video_analyze_snapshot_service,
+        schema=vol.Schema(
+            {
+                vol.Required("channel"): cv.string,
+                vol.Optional("classifier", default=True): cv.boolean,
+                vol.Optional("motion_active"): cv.boolean,
                 vol.Optional("entry_id"): cv.string,
             }
         ),

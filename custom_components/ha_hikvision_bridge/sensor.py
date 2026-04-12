@@ -45,6 +45,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 HikvisionCameraAudioLastEventSensor(coordinator, dvr_serial, cam_id),
                 HikvisionCameraAudioStreamStatusSensor(coordinator, dvr_serial, cam_id),
                 HikvisionCameraAudioLastGunshotSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoClassifierLabelSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoClassifierConfidenceSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoRuntimeStatusSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoLastEventSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoLastDetectionSensor(coordinator, dvr_serial, cam_id),
+                HikvisionCameraVideoDetectedObjectsSensor(coordinator, dvr_serial, cam_id),
             ]
         )
     async_add_entities(entities)
@@ -71,6 +77,12 @@ class BaseCameraEntity(CoordinatorEntity):
     def _audio_config(self):
         return self.coordinator.audio.get_config(self._cam_id)
 
+    def _video_state(self):
+        return self.coordinator.video.get_state(self._cam_id) or {}
+
+    def _video_config(self):
+        return self.coordinator.video.get_config(self._cam_id)
+
     @property
     def device_info(self):
         return DeviceInfo(**build_camera_device_info(self._dvr_serial, self._cam()))
@@ -94,6 +106,12 @@ class BaseCameraAudioSensor(CoordinatorEntity):
 
     def _audio_config(self):
         return self.coordinator.audio.get_config(self._cam_id)
+
+    def _video_state(self):
+        return self.coordinator.video.get_state(self._cam_id) or {}
+
+    def _video_config(self):
+        return self.coordinator.video.get_config(self._cam_id)
 
     @property
     def device_info(self):
@@ -121,8 +139,67 @@ class BaseCameraAudioSensor(CoordinatorEntity):
             "last_classifier_source": state.get("last_classifier_source"),
             "last_classifier_accepted": state.get("last_classifier_accepted"),
             "classifier_threshold": cfg.get("classifier_threshold"),
+            "classifier_runtime_status": state.get("classifier_runtime_status"),
+            "classifier_runtime_backend": state.get("classifier_runtime_backend"),
+            "classifier_runtime_error": state.get("classifier_runtime_error"),
+            "classifier_model_source": cfg.get("classifier_model_source"),
+            "classifier_backend": cfg.get("classifier_backend"),
             "calibration_profile": state.get("calibration_profile"),
             "calibration_score": state.get("calibration_score"),
+        }
+
+
+class BaseCameraVideoSensor(CoordinatorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id, name, key):
+        super().__init__(coordinator)
+        self._dvr_serial = dvr_serial
+        self._cam_id = str(cam_id)
+        self._key = key
+        self._attr_name = name
+        self._attr_has_entity_name = True
+        self._attr_unique_id = f"hikvision_{dvr_serial}_camera_{cam_id}_{key}"
+
+    def _cam(self):
+        return next((c for c in self.coordinator.data.get("cameras", []) if str(c["id"]) == self._cam_id), {})
+
+    def _video_state(self):
+        return self.coordinator.video.get_state(self._cam_id) or {}
+
+    def _video_config(self):
+        return self.coordinator.video.get_config(self._cam_id)
+
+    @property
+    def device_info(self):
+        return DeviceInfo(**build_camera_device_info(self._dvr_serial, self._cam()))
+
+    @property
+    def native_value(self):
+        return self._video_state().get(self._key)
+
+    @property
+    def extra_state_attributes(self):
+        state = self._video_state()
+        cfg = self._video_config()
+        return {
+            "channel": self._cam_id,
+            "enabled": state.get("enabled"),
+            "classifier_enabled": state.get("classifier_enabled"),
+            "runtime_status": state.get("runtime_status"),
+            "runtime_backend": state.get("runtime_backend"),
+            "runtime_device": state.get("runtime_device"),
+            "runtime_error": state.get("runtime_error"),
+            "frames_processed": state.get("frames_processed"),
+            "skipped_frames": state.get("skipped_frames"),
+            "motion_gated_skips": state.get("motion_gated_skips"),
+            "last_motion_active": state.get("last_motion_active"),
+            "object_threshold": cfg.get("object_threshold"),
+            "frame_interval_seconds": cfg.get("frame_interval_seconds"),
+            "idle_interval_seconds": cfg.get("idle_interval_seconds"),
+            "cooldown_seconds": cfg.get("cooldown_seconds"),
+            "motion_gated": cfg.get("motion_gated"),
+            "model_source": cfg.get("model_source"),
+            "runtime_preference": cfg.get("runtime_preference"),
+            "target_labels": cfg.get("target_labels"),
         }
 
 
@@ -433,3 +510,62 @@ class HikvisionCameraAudioLastGunshotSensor(BaseCameraAudioSensor, SensorEntity)
     @property
     def native_value(self):
         return _iso_from_ts(self._audio_state().get("last_gunshot_ts"))
+
+
+
+class HikvisionCameraVideoClassifierLabelSensor(BaseCameraVideoSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Classifier Label", "top_label")
+
+    @property
+    def extra_state_attributes(self):
+        attrs = dict(super().extra_state_attributes)
+        attrs["detections"] = self._video_state().get("detections") or []
+        return attrs
+
+
+class HikvisionCameraVideoClassifierConfidenceSensor(BaseCameraVideoSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Classifier Confidence", "top_confidence")
+
+    @property
+    def native_value(self):
+        return round(float(self._video_state().get("top_confidence") or 0.0), 3)
+
+
+class HikvisionCameraVideoRuntimeStatusSensor(BaseCameraVideoSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Runtime Status", "runtime_status")
+        self._attr_icon = "mdi:cctv"
+
+    @property
+    def extra_state_attributes(self):
+        attrs = dict(super().extra_state_attributes)
+        attrs["loop_status"] = self._video_state().get("loop_status")
+        return attrs
+
+
+class HikvisionCameraVideoLastEventSensor(BaseCameraVideoSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Last Event", "last_event")
+
+
+class HikvisionCameraVideoLastDetectionSensor(BaseCameraVideoSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Last Detection", "last_detection_ts")
+        self._attr_icon = "mdi:crosshairs-gps"
+
+    @property
+    def native_value(self):
+        return _iso_from_ts(self._video_state().get("last_detection_ts"))
+
+
+class HikvisionCameraVideoDetectedObjectsSensor(BaseCameraVideoSensor, SensorEntity):
+    def __init__(self, coordinator, dvr_serial, cam_id):
+        super().__init__(coordinator, dvr_serial, cam_id, "Video Detected Objects", "detected_labels")
+        self._attr_icon = "mdi:shape-outline"
+
+    @property
+    def native_value(self):
+        labels = [str(label) for label in self._video_state().get("detected_labels", []) if str(label).strip()]
+        return ", ".join(labels) if labels else None
