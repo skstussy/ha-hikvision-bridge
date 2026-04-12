@@ -74,6 +74,15 @@ class HikvisionEndpointError(UpdateFailed):
         super().__init__(" | ".join(parts))
 
 
+def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        local_tz = getattr(dt_util, "DEFAULT_TIME_ZONE", None) or dt_util.UTC
+        value = value.replace(tzinfo=local_tz)
+    return dt_util.as_utc(value)
+
+
 def _parse_hikvision_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -85,13 +94,11 @@ def _parse_hikvision_dt(value: str | None) -> datetime | None:
     except (TypeError, ValueError):
         parsed = None
     if parsed is not None:
-        return parsed
+        return _ensure_utc_datetime(parsed)
     for fmt in ("%Y%m%dT%H%M%SZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
         try:
             parsed = datetime.strptime(text, fmt)
-            if parsed.tzinfo is None:
-                return dt_util.as_local(parsed).astimezone(dt_util.UTC)
-            return parsed.astimezone(dt_util.UTC)
+            return _ensure_utc_datetime(parsed)
         except ValueError:
             continue
     return None
